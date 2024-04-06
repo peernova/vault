@@ -95,6 +95,11 @@ func NewPostgreSQLBackend(conf map[string]string, logger log.Logger) (physical.B
 		return nil, fmt.Errorf("missing connection_url")
 	}
 
+	schema, ok := conf["schema"]
+	if ok {
+		schema = schema + "."
+	}
+
 	unquoted_table, ok := conf["table"]
 	if !ok {
 		unquoted_table = "vault_kv_store"
@@ -154,9 +159,9 @@ func NewPostgreSQLBackend(conf map[string]string, logger log.Logger) (physical.B
 	// upsert.
 	var put_query string
 	if !upsertAvailable {
-		put_query = "SELECT vault_kv_put($1, $2, $3, $4)"
+		put_query = "SELECT " + schema + "vault_kv_put($1, $2, $3, $4)"
 	} else {
-		put_query = "INSERT INTO " + quoted_table + " VALUES($1, $2, $3, $4)" +
+		put_query = "INSERT INTO " + schema + quoted_table + " VALUES($1, $2, $3, $4)" +
 			" ON CONFLICT (path, key) DO " +
 			" UPDATE SET (parent_path, path, key, value) = ($1, $2, $3, $4)"
 	}
@@ -172,25 +177,25 @@ func NewPostgreSQLBackend(conf map[string]string, logger log.Logger) (physical.B
 		table:        quoted_table,
 		client:       db,
 		put_query:    put_query,
-		get_query:    "SELECT value FROM " + quoted_table + " WHERE path = $1 AND key = $2",
-		delete_query: "DELETE FROM " + quoted_table + " WHERE path = $1 AND key = $2",
-		list_query: "SELECT key FROM " + quoted_table + " WHERE path = $1" +
-			" UNION ALL SELECT DISTINCT substring(substr(path, length($1)+1) from '^.*?/') FROM " + quoted_table +
+		get_query:    "SELECT value FROM " + schema + quoted_table + " WHERE path = $1 AND key = $2",
+		delete_query: "DELETE FROM " + schema + quoted_table + " WHERE path = $1 AND key = $2",
+		list_query: "SELECT key FROM " + schema + quoted_table + " WHERE path = $1" +
+			" UNION ALL SELECT DISTINCT substring(substr(path, length($1)+1) from '^.*?/') FROM " + schema + quoted_table +
 			" WHERE parent_path LIKE $1 || '%'",
 		haGetLockValueQuery:
 		// only read non expired data
-		" SELECT ha_value FROM " + quoted_ha_table + " WHERE NOW() <= valid_until AND ha_key = $1 ",
+		" SELECT ha_value FROM " + schema + quoted_ha_table + " WHERE NOW() <= valid_until AND ha_key = $1 ",
 		haUpsertLockIdentityExec:
 		// $1=identity $2=ha_key $3=ha_value $4=TTL in seconds
 		// update either steal expired lock OR update expiry for lock owned by me
-		" INSERT INTO " + quoted_ha_table + " as t (ha_identity, ha_key, ha_value, valid_until) VALUES ($1, $2, $3, NOW() + $4 * INTERVAL '1 seconds'  ) " +
+		" INSERT INTO " + schema + quoted_ha_table + " as t (ha_identity, ha_key, ha_value, valid_until) VALUES ($1, $2, $3, NOW() + $4 * INTERVAL '1 seconds'  ) " +
 			" ON CONFLICT (ha_key) DO " +
 			" UPDATE SET (ha_identity, ha_key, ha_value, valid_until) = ($1, $2, $3, NOW() + $4 * INTERVAL '1 seconds') " +
 			" WHERE (t.valid_until < NOW() AND t.ha_key = $2) OR " +
 			" (t.ha_identity = $1 AND t.ha_key = $2)  ",
 		haDeleteLockExec:
 		// $1=ha_identity $2=ha_key
-		" DELETE FROM " + quoted_ha_table + " WHERE ha_identity=$1 AND ha_key=$2 ",
+		" DELETE FROM " + schema + quoted_ha_table + " WHERE ha_identity=$1 AND ha_key=$2 ",
 		logger:     logger,
 		permitPool: physical.NewPermitPool(maxParInt),
 		haEnabled:  conf["ha_enabled"] == "true",
