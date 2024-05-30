@@ -6,8 +6,10 @@ package connutil
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/go-secure-stdlib/parseutil"
 	"github.com/hashicorp/go-uuid"
+	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/database/dbplugin"
 	"github.com/hashicorp/vault/sdk/database/helper/dbutil"
 	"github.com/mitchellh/mapstructure"
@@ -59,6 +62,30 @@ func (c *SQLConnectionProducer) Initialize(ctx context.Context, conf map[string]
 	return err
 }
 
+func decryptPassword(config *api.Config, token, key, ciphertext string) (string, error) {
+	ct, err := api.NewClient(config)
+	if err != nil {
+		return "", fmt.Errorf("error instantiating vault client")
+	}
+	ct.SetToken(token)
+	lg := ct.Logical()
+	payload := map[string]interface{}{
+		"ciphertext": strings.Trim(ciphertext, " "),
+	}
+	sc, err := lg.Write("transit/decrypt/"+strings.Trim(key, " "), payload)
+	if err != nil {
+		return "", fmt.Errorf("error decrypting the password")
+	}
+	if b64, ok := sc.Data["plaintext"]; ok {
+		text, err := base64.StdEncoding.DecodeString(b64.(string))
+		if err != nil {
+			return "", fmt.Errorf("error decoding base64 content")
+		}
+		return string(text), nil
+	}
+	return "", fmt.Errorf("error decrypting password - no data recieved")
+}
+
 func (c *SQLConnectionProducer) Init(ctx context.Context, conf map[string]interface{}, verifyConnection bool) (map[string]interface{}, error) {
 	c.Lock()
 	defer c.Unlock()
@@ -82,6 +109,26 @@ func (c *SQLConnectionProducer) Init(ctx context.Context, conf map[string]interf
 		strings.Contains(c.Password, "{{password}}") {
 
 		return nil, fmt.Errorf("username and/or password cannot contain the template variables")
+	}
+
+	// password = "{{vault(<transit key>,"<chipertext>")}}"
+	rexp := regexp.MustCompile("^\\{\\{\\s*vault\\s*\\(([^, ]+)\\s*,\\s*\"([^\"]+)\"\\s*\\)\\s*\\}\\}$")
+	matches := rexp.FindStringSubmatch(c.Password)
+	if len(matches) > 2 {
+		key := matches[1]
+		ciphertext := matches[2]
+		if token, hasToken := conf["token"]; hasToken {
+			cf := api.DefaultConfig()
+			if addr, hasAddr := conf["address"]; hasAddr {
+				cf.Address = addr.(string)
+			}
+			c.Password, err = decryptPassword(cf, token.(string), key, ciphertext)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, fmt.Errorf("missing vault token")
+		}
 	}
 
 	// Don't escape special characters for MySQL password
