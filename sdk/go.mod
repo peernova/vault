@@ -7,7 +7,7 @@ require (
 	github.com/armon/go-metrics v0.4.1
 	github.com/armon/go-radix v1.0.0
 	github.com/cenkalti/backoff/v3 v3.2.2
-	github.com/docker/docker v25.0.5+incompatible
+	github.com/docker/docker v26.1.4+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/evanphx/json-patch/v5 v5.6.0
 	github.com/fatih/structs v1.1.0
@@ -52,6 +52,8 @@ require (
 	google.golang.org/grpc v1.60.1
 	google.golang.org/protobuf v1.34.1
 )
+
+require github.com/moby/docker-image-spec v1.3.1 // indirect
 
 require (
 	cloud.google.com/go/compute v1.23.0 // indirect
