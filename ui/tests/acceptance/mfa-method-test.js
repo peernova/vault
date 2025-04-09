@@ -11,6 +11,7 @@ import { setupMirage } from 'ember-cli-mirage/test-support';
 import mfaConfigHandler from 'vault/mirage/handlers/mfa-config';
 import { Response } from 'miragejs';
 import { underscore } from '@ember/string';
+import { GENERAL } from 'vault/tests/helpers/general-selectors';
 
 module('Acceptance | mfa-method', function (hooks) {
   setupApplicationTest(hooks);
@@ -65,7 +66,7 @@ module('Acceptance | mfa-method', function (hooks) {
     assert
       .dom(`[data-test-mfa-method-list-item="${model.id}"]`)
       .includesText(
-        `${model.name} ${model.id} Namespace: ${model.namespace_id}`,
+        `${model.name} ${model.id} Namespace: ${model.namespace_path}`,
         'Copy renders for list item'
       );
 
@@ -84,6 +85,17 @@ module('Acceptance | mfa-method', function (hooks) {
       'vault.cluster.access.mfa.methods.method.edit',
       'Edit more menu action transitions to method edit route'
     );
+  });
+
+  test('it should not display for the root namespace', async function (assert) {
+    await visit('/vault/access/mfa');
+    const methods = this.getMethods();
+    const duoModel = this.store.peekRecord('mfa-method', methods[1].id);
+    assert.strictEqual(duoModel.namespace_path, '', 'Namespace path is unset');
+    assert
+      .dom(`[data-test-mfa-method-list-item="${duoModel.id}"]`)
+      .includesText(`${duoModel.name} ${duoModel.id}`, 'Copy renders for list item without namespace path')
+      .doesNotContainText('Namespace:', 'Does not include the namespace label');
   });
 
   test('it should display method details', async function (assert) {
@@ -181,17 +193,10 @@ module('Acceptance | mfa-method', function (hooks) {
         .dom('[data-test-inline-error-message]')
         .exists({ count: required.length }, `Required field validations display for ${type}`);
 
-      for (const [i, field] of required.entries()) {
-        let inputType = 'input';
-        // this is less than ideal but updating the test selectors in masked-input break a bunch of tests
-        // add value to the masked input text area data-test attributes for selection
-        if (['secret_key', 'integration_key'].includes(field)) {
-          inputType = 'textarea';
-          const textareas = this.element.querySelectorAll('[data-test-textarea]');
-          textareas[i].setAttribute('data-test-textarea', field);
-        }
-        await fillIn(`[data-test-${inputType}="${field}"]`, 'foo');
+      for (const field of required) {
+        await fillIn(GENERAL.inputByAttr(field), 'foo');
       }
+
       await click('[data-test-mfa-create-save]');
       assert.strictEqual(
         currentRouteName(),
@@ -220,10 +225,12 @@ module('Acceptance | mfa-method', function (hooks) {
       'Route transitions to method on save'
     );
     await click('[data-test-tab="enforcements"]');
-    assert.dom('[data-test-list-item]').hasText('bar', 'Enforcement is listed in method view');
+    assert.dom('[data-test-list-item]').hasTextContaining('bar', 'Enforcement is listed in method view');
     await click('[data-test-sidebar-nav-link="Multi-Factor Authentication"]');
     await click('[data-test-tab="enforcements"]');
-    assert.dom('[data-test-list-item="bar"]').hasText('bar', 'Enforcement is listed in enforcements view');
+    assert
+      .dom('[data-test-list-item="bar"]')
+      .hasTextContaining('bar', 'Enforcement is listed in enforcements view');
     await click('[data-test-list-item="bar"]');
     await click('[data-test-tab="methods"]');
     assert
@@ -248,12 +255,14 @@ module('Acceptance | mfa-method', function (hooks) {
       'Route transitions to method on save'
     );
     await click('[data-test-tab="enforcements"]');
-    assert.dom('[data-test-list-item]').hasText(name, 'Enforcement is listed in method view');
+    assert.dom('[data-test-list-item]').hasTextContaining(name, 'Enforcement is listed in method view');
   });
 
   test('it should edit methods', async function (assert) {
     await visit('/vault/access/mfa/methods');
-    const id = this.element.querySelector('[data-test-mfa-method-list-item] .tag').textContent.trim();
+    const id = this.element
+      .querySelector('[data-test-mfa-method-list-item] .hds-badge div')
+      .textContent.trim();
     const model = this.store.peekRecord('mfa-method', id);
     await click('[data-test-mfa-method-list-item] [data-test-popup-menu-trigger]');
     await click('[data-test-mfa-method-menu-link="edit"]');

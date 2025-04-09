@@ -19,9 +19,7 @@
     <h1 class="title is-3" data-test-policy-name="true">
       {{this.model.id}}
       {{#if this.model.enforcementLevel}}
-        <span class="tag" aria-label="Enforcement level: {{this.model.enforcementLevel}}">
-          {{this.model.enforcementLevel}}
-        </span>
+        <Hds::Badge @text={{this.model.enforcementLevel}} aria-label="Enforcement level: {{this.model.enforcementLevel}}" />
       {{/if}}
     </h1>
   </p.levelLeft>
@@ -36,7 +34,7 @@
       @extension={{if (eq this.policyType "acl") this.model.format "sentinel"}}
       @text="Download policy"
     />
-    {{#if (and (not-eq this.model.id "root") (or this.capabilities.canUpdate this.capabilities.canDelete))}}
+    {{#if (and (not-eq this.model.id "root") (or this.model.canUpdate this.model.canDelete))}}
       <ToolbarLink
         @route="vault.cluster.policy.edit"
         @models={{array this.policyType this.model.id}}

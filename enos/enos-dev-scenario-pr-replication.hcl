@@ -1,81 +1,26 @@
-# Copyright (c) HashiCorp, Inc.
-# SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: BUSL-1.1
 
 scenario "dev_pr_replication" {
   description = <<-EOF
-    This scenario spins up a two Vault clusters with either an external Consul cluster or
+    This scenario spins up two Vault clusters with either an external Consul cluster or
     integrated Raft for storage. The secondary cluster is configured with performance replication
     from the primary cluster. None of our test verification is included in this scenario in order
-    to improve end-to-end speed. If you wish to perform such verification you'll need to a non-dev
-    scenario.
+    to improve end-to-end speed. If you wish to perform such verification you'll need to use a
+    non-dev scenario.
 
-    The scenario supports finding and installing any released 'linux/amd64' or 'linux/arm64' Vault
-    artifact as long as its version is >= 1.8. You can also use the 'artifact:local' variant to
-    build and deploy the current branch!
-
-    In order to execute this scenario you'll need to install the enos CLI:
-      brew tap hashicorp/tap && brew update && brew install hashicorp/tap/enos
-
-    You'll also need access to an AWS account with an SSH keypair.
-    Perform the steps here to get AWS access with Doormat https://eng-handbook.hashicorp.services/internal-tools/enos/common-setup-steps/#authenticate-with-doormat
-    Perform the steps here to get an AWS keypair set up: https://eng-handbook.hashicorp.services/internal-tools/enos/common-setup-steps/#set-your-aws-key-pair-name-and-private-key
-
-    Please note that this scenario requires several inputs variables to be set in order to function
-    properly. While not all variants will require all variables, it's suggested that you look over
-    the scenario outline to determine which variables affect which steps and which have inputs that
-    you should set. You can use the following command to get a textual outline of the entire
-    scenario:
-      enos scenario outline dev_pr_replication
-
-    You can also create an HTML version that is suitable for viewing in web browsers:
-      enos scenario outline dev_pr_replication --format html > index.html
-      open index.html
-
-    To configure the required variables you have a couple of choices. You can create an
-    'enos-local.vars' file in the same 'enos' directory where this scenario is defined. In it you
-    declare your desired variable values. For example, you could copy the following content and
-    then set the values as necessary:
-
-    artifactory_username      = "username@hashicorp.com"
-    artifactory_token         = "<ARTIFACTORY TOKEN VALUE>
-    aws_region                = "us-west-2"
-    aws_ssh_keypair_name      = "<YOUR REGION SPECIFIC KEYPAIR NAME>"
-    aws_ssh_keypair_key_path  = "/path/to/your/private/key.pem"
-    dev_build_local_ui        = false
-    dev_consul_version        = "1.18.1"
-    vault_license_path        = "./support/vault.hclic"
-    vault_product_version     = "1.16.2"
-
-    Alternatively, you can set them in your environment:
-    export ENOS_VAR_aws_region="us-west-2"
-    export ENOS_VAR_vault_license_path="./support/vault.hclic"
-
-    After you've configured your inputs you can list and filter the available scenarios and then
-    subsequently launch and destroy them.
-      enos scenario list --help
-      enos scenario launch --help
-      enos scenario list dev_pr_replication
-      enos scenario launch dev_pr_replication arch:amd64 artifact:deb distro:ubuntu edition:ent.hsm primary_backend:raft primary_seal:awskms secondary_backend:raft secondary_seal:pkcs11
-
-    When the scenario is finished launching you refer to the scenario outputs to see information
-    related to your cluster. You can use this information to SSH into nodes and/or to interact
-    with vault.
-      enos scenario output dev_pr_replication arch:amd64 artifact:deb distro:ubuntu edition:ent.hsm primary_backend:raft primary_seal:awskms secondary_backend:raft secondary_seal:pkcs11
-      ssh -i /path/to/your/private/key.pem <PUBLIC_IP>
-      vault status
-
-    After you've finished you can tear down the cluster
-      enos scenario destroy dev_pr_replication arch:amd64 artifact:deb distro:ubuntu edition:ent.hsm primary_backend:raft primary_seal:awskms secondary_backend:raft secondary_seal:pkcs11
+    For a full tutorial for this scenario, see here:
+    https://eng-handbook.hashicorp.services/internal-tools/enos/tutorial-vault-dev-scenario-pr-replication/
   EOF
 
   // The matrix is where we define all the baseline combinations that enos can utilize to customize
-  // your scenario. By default enos attempts to perform your command an the entire product! Most
-  // of the time you'll want to reduce that by passing in a filter.
+  // your scenario. By default enos attempts to perform your command on the entire product of these
+  // possible comginations! Most of the time you'll want to reduce that by passing in a filter.
   // Run 'enos scenario list --help' to see more about how filtering scenarios works in enos.
   matrix {
     arch              = ["amd64", "arm64"]
     artifact          = ["local", "deb", "rpm", "zip"]
-    distro            = ["ubuntu", "rhel"]
+    distro            = ["amzn", "leap", "rhel", "sles", "ubuntu"]
     edition           = ["ent", "ent.fips1402", "ent.hsm", "ent.hsm.fips1402"]
     primary_backend   = ["consul", "raft"]
     primary_seal      = ["awskms", "pkcs11", "shamir"]
@@ -117,8 +62,8 @@ scenario "dev_pr_replication" {
   // Here we declare all of the providers that we might need for our scenario.
   providers = [
     provider.aws.default,
-    provider.enos.ubuntu,
-    provider.enos.rhel
+    provider.enos.ec2_user,
+    provider.enos.ubuntu
   ]
 
   // These are variable values that are local to our scenario. They are evaluated after external
@@ -127,19 +72,24 @@ scenario "dev_pr_replication" {
     // The enos provider uses different ssh transport configs for different distros (as
     // specified in enos-providers.hcl), and we need to be able to access both of those here.
     enos_provider = {
-      rhel   = provider.enos.rhel
+      amzn   = provider.enos.ec2_user
+      leap   = provider.enos.ec2_user
+      rhel   = provider.enos.ec2_user
+      sles   = provider.enos.ec2_user
       ubuntu = provider.enos.ubuntu
     }
     // We install vault packages from artifactory. If you wish to use one of these variants you'll
     // need to configure your artifactory credentials.
     use_artifactory = matrix.artifact == "deb" || matrix.artifact == "rpm"
+    // The IP version to use for the Vault listener and associated things.
+    ip_version = 4
     // Zip bundles and local builds don't come with systemd units or any associated configuration.
     // When this is true we'll let enos handle this for us.
     manage_service = matrix.artifact == "zip" || matrix.artifact == "local"
     // If you are using an ent edition, you will need a Vault license. Common convention
     // is to store it at ./support/vault.hclic, but you may change this path according
     // to your own preference.
-    vault_install_dir = matrix.artifact == "zip" ? var.vault_install_dir : global.vault_install_dir_packages[matrix.distro]
+    vault_install_dir = matrix.artifact == "zip" || matrix.artifact == "local" ? global.vault_install_dir["bundle"] : global.vault_install_dir["package"]
   }
 
   // Begin scenario steps. These are the steps we'll perform to get your cluster up and running.
@@ -155,15 +105,18 @@ scenario "dev_pr_replication" {
         artifactory_host:
           The artifactory host to search. It's very unlikely that you'll want to change this. The
           default value is the HashiCorp Artifactory instance.
-        artifactory_repo
+        artifactory_repo:
           The artifactory host to search. It's very unlikely that you'll want to change this. The
           default value is where CRT will publish packages.
-        artifactory_username
+        artifactory_username:
           The artifactory username associated with your token. You'll need this if you wish to use
           deb or rpm artifacts! You can request access via Okta.
-        artifactory_token
+        artifactory_token:
           The artifactory token associated with your username. You'll need this if you wish to use
           deb or rpm artifacts! You can create a token by logging into Artifactory via Okta.
+        dev_build_local_ui:
+          If you are not testing any changes in the UI, set to false. This will save time by not
+          building the entire UI. If you need to test the UI, set to true.
         vault_product_version:
           When using the artifact:rpm or artifact:deb variants we'll use this variable to determine
           which version of the Vault pacakge we should fetch from Artifactory.
@@ -200,7 +153,7 @@ scenario "dev_pr_replication" {
   }
 
   step "ec2_info" {
-    description = "This discovers usefull metadata in Ec2 like AWS AMI ID's that we use in later modules."
+    description = "This discovers usefull metadata in Ec2 like AWS AMI IDs that we use in later modules."
     module      = module.ec2_info
   }
 
@@ -336,6 +289,7 @@ scenario "dev_pr_replication" {
       ami_id          = step.ec2_info.ami_ids[matrix.arch][matrix.distro][global.distro_version[matrix.distro]]
       cluster_tag_key = global.vault_tag_key
       common_tags     = global.tags
+      instance_count  = try(var.vault_instance_count, 3)
       seal_key_names  = step.create_primary_seal_key.resource_names
       vpc_id          = step.create_vpc.id
     }
@@ -365,7 +319,7 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"]["22.04"]
+      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"][global.distro_version["ubuntu"]]
       cluster_tag_key = global.backend_tag_key
       common_tags     = global.tags
       seal_key_names  = step.create_primary_seal_key.resource_names
@@ -411,7 +365,7 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"]["22.04"]
+      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"][global.distro_version["ubuntu"]]
       cluster_tag_key = global.backend_tag_key
       common_tags     = global.tags
       seal_key_names  = step.create_secondary_seal_key.resource_names
@@ -445,12 +399,12 @@ scenario "dev_pr_replication" {
     variables {
       cluster_name    = step.create_primary_cluster_backend_targets.cluster_name
       cluster_tag_key = global.backend_tag_key
+      hosts           = step.create_primary_cluster_backend_targets.hosts
       license         = matrix.primary_backend == "consul" ? step.read_backend_license.license : null
       release = {
         edition = var.backend_edition
         version = var.dev_consul_version
       }
-      target_hosts = step.create_primary_cluster_backend_targets.hosts
     }
   }
 
@@ -509,16 +463,17 @@ scenario "dev_pr_replication" {
         version = var.dev_consul_version
       } : null
       enable_audit_devices = var.vault_enable_audit_devices
+      hosts                = step.create_primary_cluster_targets.hosts
       install_dir          = local.vault_install_dir
+      ip_version           = local.ip_version
       license              = step.read_vault_license.license
       local_artifact_path  = matrix.artifact == "local" ? abspath(var.vault_artifact_path) : null
       manage_service       = local.manage_service
-      packages             = concat(global.packages, global.distro_packages[matrix.distro])
+      packages             = concat(global.packages, global.distro_packages[matrix.distro][global.distro_version[matrix.distro]])
       release              = matrix.artifact == "zip" ? { version = var.vault_product_version, edition = matrix.edition } : null
       seal_attributes      = step.create_primary_seal_key.attributes
       seal_type            = matrix.primary_seal
       storage_backend      = matrix.primary_backend
-      target_hosts         = step.create_primary_cluster_targets.hosts
     }
   }
 
@@ -548,12 +503,12 @@ scenario "dev_pr_replication" {
     variables {
       cluster_name    = step.create_secondary_cluster_backend_targets.cluster_name
       cluster_tag_key = global.backend_tag_key
+      hosts           = step.create_secondary_cluster_backend_targets.hosts
       license         = matrix.secondary_backend == "consul" ? step.read_backend_license.license : null
       release = {
         edition = var.backend_edition
         version = var.dev_consul_version
       }
-      target_hosts = step.create_secondary_cluster_backend_targets.hosts
     }
   }
 
@@ -611,16 +566,17 @@ scenario "dev_pr_replication" {
         version = var.dev_consul_version
       } : null
       enable_audit_devices = var.vault_enable_audit_devices
+      hosts                = step.create_secondary_cluster_targets.hosts
       install_dir          = local.vault_install_dir
+      ip_version           = local.ip_version
       license              = step.read_vault_license.license
       local_artifact_path  = matrix.artifact == "local" ? abspath(var.vault_artifact_path) : null
       manage_service       = local.manage_service
-      packages             = concat(global.packages, global.distro_packages[matrix.distro])
+      packages             = concat(global.packages, global.distro_packages[matrix.distro][global.distro_version[matrix.distro]])
       release              = matrix.artifact == "zip" ? { version = var.vault_product_version, edition = matrix.edition } : null
       seal_attributes      = step.create_secondary_seal_key.attributes
       seal_type            = matrix.secondary_seal
       storage_backend      = matrix.secondary_backend
-      target_hosts         = step.create_secondary_cluster_targets.hosts
     }
   }
 
@@ -628,7 +584,7 @@ scenario "dev_pr_replication" {
     description = <<-EOF
       Wait for the for the primary cluster to unseal and reach a healthy state.
     EOF
-    module      = module.vault_verify_unsealed
+    module      = module.vault_wait_for_cluster_unsealed
     depends_on = [
       step.create_primary_cluster
     ]
@@ -638,7 +594,8 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      vault_instances   = step.create_primary_cluster_targets.hosts
+      hosts             = step.create_primary_cluster_targets.hosts
+      vault_addr        = step.create_primary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
     }
   }
@@ -647,7 +604,7 @@ scenario "dev_pr_replication" {
     description = <<-EOF
       Wait for the for the secondary cluster to unseal and reach a healthy state.
     EOF
-    module      = module.vault_verify_unsealed
+    module      = module.vault_wait_for_cluster_unsealed
     depends_on = [
       step.create_secondary_cluster
     ]
@@ -657,7 +614,8 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      vault_instances   = step.create_secondary_cluster_targets.hosts
+      hosts             = step.create_secondary_cluster_targets.hosts
+      vault_addr        = step.create_secondary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
     }
   }
@@ -676,7 +634,9 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      vault_hosts       = step.create_primary_cluster_targets.hosts
+      hosts             = step.create_primary_cluster_targets.hosts
+      ip_version        = local.ip_version
+      vault_addr        = step.create_primary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
       vault_root_token  = step.create_primary_cluster.root_token
     }
@@ -696,7 +656,9 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      vault_hosts       = step.create_secondary_cluster_targets.hosts
+      hosts             = step.create_secondary_cluster_targets.hosts
+      ip_version        = local.ip_version
+      vault_addr        = step.create_secondary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
       vault_root_token  = step.create_secondary_cluster.root_token
     }
@@ -706,7 +668,7 @@ scenario "dev_pr_replication" {
     description = <<-EOF
       Enable the auth userpass method and create a new user.
     EOF
-    module      = module.vault_verify_write_data
+    module      = module.vault_verify_secrets_engines_create
     depends_on  = [step.get_primary_cluster_ips]
 
 
@@ -715,9 +677,9 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      leader_public_ip  = step.get_primary_cluster_ips.leader_public_ip
-      leader_private_ip = step.get_primary_cluster_ips.leader_private_ip
-      vault_instances   = step.create_primary_cluster_targets.hosts
+      hosts             = step.create_primary_cluster_targets.hosts
+      leader_host       = step.get_primary_cluster_ips.leader_host
+      vault_addr        = step.create_primary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
       vault_root_token  = step.create_primary_cluster.root_token
     }
@@ -740,10 +702,11 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      primary_leader_public_ip  = step.get_primary_cluster_ips.leader_public_ip
-      primary_leader_private_ip = step.get_primary_cluster_ips.leader_private_ip
-      vault_install_dir         = local.vault_install_dir
-      vault_root_token          = step.create_primary_cluster.root_token
+      ip_version          = local.ip_version
+      primary_leader_host = step.get_primary_cluster_ips.leader_host
+      vault_addr          = step.create_primary_cluster.api_addr_localhost
+      vault_install_dir   = local.vault_install_dir
+      vault_root_token    = step.create_primary_cluster.root_token
     }
   }
 
@@ -760,9 +723,12 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      primary_leader_public_ip = step.get_primary_cluster_ips.leader_public_ip
-      vault_install_dir        = local.vault_install_dir
-      vault_root_token         = step.create_primary_cluster.root_token
+      ip_version          = local.ip_version
+      primary_leader_host = step.get_primary_cluster_ips.leader_host
+      replication_type    = "performance"
+      vault_addr          = step.create_primary_cluster.api_addr_localhost
+      vault_install_dir   = local.vault_install_dir
+      vault_root_token    = step.create_primary_cluster.root_token
     }
   }
 
@@ -770,7 +736,7 @@ scenario "dev_pr_replication" {
     description = <<-EOF
       Enable performance replication on the secondary using the new shared token.
     EOF
-    module      = module.vault_setup_perf_secondary
+    module      = module.vault_setup_replication_secondary
     depends_on  = [step.generate_secondary_token]
 
     providers = {
@@ -778,11 +744,13 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      secondary_leader_public_ip  = step.get_secondary_cluster_ips.leader_public_ip
-      secondary_leader_private_ip = step.get_secondary_cluster_ips.leader_private_ip
-      vault_install_dir           = local.vault_install_dir
-      vault_root_token            = step.create_secondary_cluster.root_token
-      wrapping_token              = step.generate_secondary_token.secondary_token
+      ip_version            = local.ip_version
+      secondary_leader_host = step.get_secondary_cluster_ips.leader_host
+      replication_type      = "performance"
+      vault_addr            = step.create_secondary_cluster.api_addr_localhost
+      vault_install_dir     = local.vault_install_dir
+      vault_root_token      = step.create_secondary_cluster.root_token
+      wrapping_token        = step.generate_secondary_token.secondary_token
     }
   }
 
@@ -792,7 +760,7 @@ scenario "dev_pr_replication" {
       Depending on how we're configured we'll pass the unseal keys according to this guide:
       https://developer.hashicorp.com/vault/docs/enterprise/replication#seals
     EOF
-    module      = module.vault_unseal_nodes
+    module      = module.vault_unseal_replication_followers
     depends_on = [
       step.create_primary_cluster,
       step.create_secondary_cluster,
@@ -805,10 +773,11 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      follower_public_ips = step.get_secondary_cluster_ips.follower_public_ips
-      vault_install_dir   = local.vault_install_dir
-      vault_unseal_keys   = matrix.primary_seal == "shamir" ? step.create_primary_cluster.unseal_keys_hex : step.create_primary_cluster.recovery_keys_hex
-      vault_seal_type     = matrix.primary_seal == "shamir" ? matrix.primary_seal : matrix.secondary_seal
+      hosts             = step.get_secondary_cluster_ips.follower_hosts
+      vault_addr        = step.create_secondary_cluster.api_addr_localhost
+      vault_install_dir = local.vault_install_dir
+      vault_unseal_keys = matrix.primary_seal == "shamir" ? step.create_primary_cluster.unseal_keys_hex : step.create_primary_cluster.recovery_keys_hex
+      vault_seal_type   = matrix.primary_seal == "shamir" ? matrix.primary_seal : matrix.secondary_seal
     }
   }
 
@@ -816,7 +785,7 @@ scenario "dev_pr_replication" {
     description = <<-EOF
       Verify that the secondary cluster is unsealed after we enable PR replication.
     EOF
-    module      = module.vault_verify_unsealed
+    module      = module.vault_wait_for_cluster_unsealed
     depends_on = [
       step.unseal_secondary_followers
     ]
@@ -826,7 +795,8 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      vault_instances   = step.create_secondary_cluster_targets.hosts
+      hosts             = step.create_secondary_cluster_targets.hosts
+      vault_addr        = step.create_primary_cluster.api_addr_localhost
       vault_install_dir = local.vault_install_dir
     }
   }
@@ -844,11 +814,11 @@ scenario "dev_pr_replication" {
     }
 
     variables {
-      primary_leader_public_ip    = step.get_primary_cluster_ips.leader_public_ip
-      primary_leader_private_ip   = step.get_primary_cluster_ips.leader_private_ip
-      secondary_leader_public_ip  = step.get_secondary_cluster_ips.leader_public_ip
-      secondary_leader_private_ip = step.get_secondary_cluster_ips.leader_private_ip
-      vault_install_dir           = local.vault_install_dir
+      ip_version            = local.ip_version
+      primary_leader_host   = step.get_primary_cluster_ips.leader_host
+      secondary_leader_host = step.get_secondary_cluster_ips.leader_host
+      vault_addr            = step.create_primary_cluster.api_addr_localhost
+      vault_install_dir     = local.vault_install_dir
     }
   }
 

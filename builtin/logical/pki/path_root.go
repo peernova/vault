@@ -293,7 +293,7 @@ func (b *backend) pathCAGenerateRoot(ctx context.Context, req *logical.Request, 
 	}
 
 	// Build a fresh CRL
-	warnings, err = b.CrlBuilder().rebuild(sc, true)
+	warnings, err = b.CrlBuilder().Rebuild(sc, true)
 	if err != nil {
 		return nil, err
 	}
@@ -356,6 +356,7 @@ func (b *backend) pathIssuerSignIntermediate(ctx context.Context, req *logical.R
 		NotAfter:                  data.Get("not_after").(string),
 		NotBeforeDuration:         time.Duration(data.Get("not_before_duration").(int)) * time.Second,
 		CNValidations:             []string{"disabled"},
+		KeyUsage:                  data.Get("key_usage").([]string),
 	}
 	*role.AllowWildcardCertificates = true
 
@@ -365,7 +366,7 @@ func (b *backend) pathIssuerSignIntermediate(ctx context.Context, req *logical.R
 
 	var caErr error
 	sc := b.makeStorageContext(ctx, req.Storage)
-	signingBundle, caErr := sc.fetchCAInfo(issuerName, issuing.IssuanceUsage)
+	signingBundle, issuerId, caErr := sc.fetchCAInfoWithIssuer(issuerName, issuing.IssuanceUsage)
 	if caErr != nil {
 		switch caErr.(type) {
 		case errutil.UserError:
@@ -382,8 +383,10 @@ func (b *backend) pathIssuerSignIntermediate(ctx context.Context, req *logical.R
 		// Since we are signing an intermediate, we will by default truncate the
 		// signed intermediary in order to generate a valid intermediary chain. This
 		// was changed in 1.17.x as the default prior was PermitNotAfterBehavior
-		warnAboutTruncate = true
-		signingBundle.LeafNotAfterBehavior = certutil.TruncateNotAfterBehavior
+		if signingBundle.LeafNotAfterBehavior != certutil.AlwaysEnforceErr {
+			warnAboutTruncate = true
+			signingBundle.LeafNotAfterBehavior = certutil.TruncateNotAfterBehavior
+		}
 	}
 
 	useCSRValues := data.Get("use_csr_values").(bool)
@@ -399,7 +402,7 @@ func (b *backend) pathIssuerSignIntermediate(ctx context.Context, req *logical.R
 		apiData: data,
 		role:    role,
 	}
-	parsedBundle, warnings, err := signCert(b, input, signingBundle, true, useCSRValues)
+	parsedBundle, warnings, err := signCert(b.System(), input, signingBundle, true, useCSRValues)
 	if err != nil {
 		switch err.(type) {
 		case errutil.UserError:
@@ -410,7 +413,7 @@ func (b *backend) pathIssuerSignIntermediate(ctx context.Context, req *logical.R
 		}
 	}
 
-	if err := parsedBundle.Verify(); err != nil {
+	if err := issuing.VerifyCertificate(sc.GetContext(), sc.GetStorage(), issuerId, parsedBundle); err != nil {
 		return nil, fmt.Errorf("verification of parsed bundle failed: %w", err)
 	}
 

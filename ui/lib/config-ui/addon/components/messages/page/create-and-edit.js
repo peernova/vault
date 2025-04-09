@@ -11,6 +11,7 @@ import { service } from '@ember/service';
 import { action } from '@ember/object';
 import Ember from 'ember';
 import { isAfter } from 'date-fns';
+import timestamp from 'core/utils/timestamp';
 
 /**
  * @module Page::CreateAndEditMessageForm
@@ -23,8 +24,9 @@ import { isAfter } from 'date-fns';
  */
 
 export default class MessagesList extends Component {
-  @service router;
+  @service('app-router') router;
   @service store;
+  @service pagination;
   @service flashMessages;
   @service customMessages;
   @service namespace;
@@ -62,7 +64,7 @@ export default class MessagesList extends Component {
       const modalMessages = this.args.messages?.filter((message) => message.type === 'modal') || [];
       const hasExpiredModalMessages = modalMessages.every((message) => {
         if (!message.endTime) return false;
-        return isAfter(new Date(), new Date(message.endTime));
+        return isAfter(timestamp.now(), new Date(message.endTime));
       });
 
       if (!hasExpiredModalMessages && this.args.hasSomeActiveModals && this.args.message.type === 'modal') {
@@ -75,7 +77,7 @@ export default class MessagesList extends Component {
         const { isNew } = this.args.message;
         const { id, title } = yield this.args.message.save();
         this.flashMessages.success(`Successfully ${isNew ? 'created' : 'updated'} ${title} message.`);
-        this.store.clearDataset('config-ui/message');
+        this.pagination.clearDataset('config-ui/message');
         this.customMessages.fetchMessages(this.namespace.path);
         this.router.transitionTo('vault.cluster.config-ui.messages.message.details', id);
       }

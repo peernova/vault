@@ -50,7 +50,6 @@ const appConfig = {
     precision: 4,
     includePaths: [
       './node_modules/@hashicorp/design-system-components/dist/styles',
-      './node_modules/@hashicorp/ember-flight-icons/dist/styles',
       './node_modules/@hashicorp/design-system-tokens/dist/products/css',
     ],
   },
@@ -81,10 +80,6 @@ const appConfig = {
 module.exports = function (defaults) {
   const app = new EmberApp(defaults, appConfig);
 
-  app.import('vendor/string-includes.js');
-  app.import('node_modules/string.prototype.endswith/endswith.js');
-  app.import('node_modules/string.prototype.startswith/startswith.js');
-
   app.import('node_modules/jsonlint/lib/jsonlint.js');
   app.import('node_modules/codemirror/addon/lint/lint.css');
   app.import('node_modules/codemirror/lib/codemirror.css');
@@ -93,6 +88,9 @@ module.exports = function (defaults) {
   app.import('node_modules/jsondiffpatch/dist/formatters-styles/html.css');
 
   app.import('app/styles/bulma/bulma-radio-checkbox.css');
+  app.import(
+    'node_modules/@hashicorp/design-system-components/dist/styles/@hashicorp/design-system-components.css'
+  );
 
   return app.toTree();
 };

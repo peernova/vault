@@ -18,10 +18,6 @@
         "path": "secret"
       },
       {
-        "title": "Active Directory",
-        "path": "secret/ad"
-      },
-      {
         "title": "AliCloud",
         "path": "secret/alicloud"
       },
@@ -259,7 +255,16 @@
       },
       {
         "title": "PKI",
-        "path": "secret/pki"
+        "routes": [
+          {
+            "title": "Overview",
+            "path": "secret/pki"
+          },
+          {
+            "title": "Issuance Protocols",
+            "path": "secret/pki/issuance"
+          }
+        ]
       },
       {
         "title": "RabbitMQ",
@@ -384,6 +389,15 @@
       {
         "title": "Overview",
         "path": "system"
+      },
+      {
+        "title": "<code>/sys/activation-flags</code>",
+        "path": "system/activation-flags",
+        "badge": {
+          "text": "ENT",
+          "type": "outlined",
+          "color": "neutral"
+        }
       },
       {
         "title": "<code>/sys/audit</code>",

@@ -34,6 +34,13 @@ const ssh = {
       fieldGroup: 'default',
       type: 'boolean',
     },
+    allowEmptyPrincipals: {
+      editType: 'boolean',
+      fieldGroup: 'default',
+      helpText:
+        'Whether to allow issuing certificates with no valid principals (meaning any valid principal). Exists for backwards compatibility only, the default of false is highly recommended.',
+      type: 'boolean',
+    },
     allowHostCertificates: {
       editType: 'boolean',
       helpText:
@@ -594,6 +601,14 @@ const pki = {
       label: 'DNS/Email Subject Alternative Names (SANs)',
       type: 'string',
     },
+    certMetadata: {
+      editType: 'string',
+      fieldGroup: 'default',
+      helpText:
+        "User supplied metadata to store associated with this certificate's serial number, base64 encoded",
+      label: 'Certificate Metadata',
+      type: 'string',
+    },
     commonName: {
       editType: 'string',
       helpText:
@@ -629,14 +644,6 @@ const pki = {
       helpText:
         'Reference to a existing issuer; either "default" for the configured default issuer, an identifier or the name assigned to the issuer.',
       fieldGroup: 'default',
-      type: 'string',
-    },
-    metadata: {
-      editType: 'string',
-      fieldGroup: 'default',
-      helpText:
-        "User supplied metadata to store associated with this certificate's serial number, base64 encoded",
-      label: 'Metadata',
       type: 'string',
     },
     notAfter: {
@@ -714,6 +721,14 @@ const pki = {
       label: 'DNS/Email Subject Alternative Names (SANs)',
       type: 'string',
     },
+    certMetadata: {
+      editType: 'string',
+      fieldGroup: 'default',
+      helpText:
+        "User supplied metadata to store associated with this certificate's serial number, base64 encoded",
+      label: 'Certificate Metadata',
+      type: 'string',
+    },
     commonName: {
       editType: 'string',
       helpText:
@@ -755,14 +770,6 @@ const pki = {
       helpText:
         'Reference to a existing issuer; either "default" for the configured default issuer, an identifier or the name assigned to the issuer.',
       fieldGroup: 'default',
-      type: 'string',
-    },
-    metadata: {
-      editType: 'string',
-      fieldGroup: 'default',
-      helpText:
-        "User supplied metadata to store associated with this certificate's serial number, base64 encoded",
-      label: 'Metadata',
       type: 'string',
     },
     notAfter: {
@@ -1071,7 +1078,7 @@ const pki = {
     noStoreMetadata: {
       editType: 'boolean',
       helpText:
-        'If set, if a client attempts to issue or sign a certificate with attached metadata to store, the issuance / signing instead fails.',
+        'If set, if a client attempts to issue or sign a certificate with attached cert_metadata to store, the issuance / signing instead fails.',
       fieldGroup: 'default',
       type: 'boolean',
     },
@@ -1123,6 +1130,15 @@ const pki = {
       fieldGroup: 'default',
       label: 'Require Common Name',
       type: 'boolean',
+    },
+    serialNumberSource: {
+      defaultValue: 'json-csr',
+      editType: 'string',
+      fieldGroup: 'default',
+      helpText:
+        'Source for the certificate subject serial number. If "json-csr" (default), the value from the JSON serial_number field is used, falling back to the value in the CSR if empty. If "json", the value from the serial_number JSON field is used, ignoring the value in the CSR.',
+      label: 'Serial number source',
+      type: 'string',
     },
     serverFlag: {
       editType: 'boolean',
@@ -1227,6 +1243,34 @@ const pki = {
       label: 'Exclude Common Name from Subject Alternative Names (SANs)',
       type: 'boolean',
     },
+    excludedDnsDomains: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'Domains for which this certificate is not allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
+      label: 'Excluded DNS Domains',
+    },
+    excludedEmailAddresses: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'Email addresses for which this certificate is not allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
+      label: 'Excluded email addresses',
+    },
+    excludedIpRanges: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'IP ranges for which this certificate is not allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10). Ranges must be specified in the notation of IP address and prefix length, like "192.0.2.0/24" or "2001:db8::/32", as defined in RFC 4632 and RFC 4291.',
+      label: 'Excluded IP ranges',
+    },
+    excludedUriDomains: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'URI domains for which this certificate is not allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
+      label: 'Excluded URI domains',
+    },
     format: {
       editType: 'string',
       helpText:
@@ -1248,6 +1292,12 @@ const pki = {
         "Provide a name to the generated or existing issuer, the name must be unique across all issuers and not be the reserved value 'default'",
       fieldGroup: 'default',
       type: 'string',
+    },
+    keyUsage: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'This list of key usages (not extended key usages) will be added to the existing set of key usages, CRL,CertSign, on the generated certificate. Valid values can be found at https://golang.org/pkg/crypto/x509/#KeyUsage -- simply drop the "KeyUsage" part of the name. To use the issuer for CMPv2, DigitalSignature must be set.',
     },
     locality: {
       editType: 'stringArray',
@@ -1298,6 +1348,27 @@ const pki = {
         'Domains for which this certificate is allowed to sign or issue child certificates. If set, all DNS names (subject and alt) on child certs must be exact matches or subsets of the given domains (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
       fieldGroup: 'default',
       label: 'Permitted DNS Domains',
+    },
+    permittedEmailAddresses: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'Email addresses for which this certificate is allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
+      label: 'Permitted email addresses',
+    },
+    permittedIpRanges: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'IP ranges for which this certificate is allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10). Ranges must be specified in the notation of IP address and prefix length, like "192.0.2.0/24" or "2001:db8::/32", as defined in RFC 4632 and RFC 4291.',
+      label: 'Permitted IP ranges',
+    },
+    permittedUriDomains: {
+      editType: 'stringArray',
+      fieldGroup: 'default',
+      helpText:
+        'URI domains for which this certificate is allowed to sign or issue child certificates (see https://tools.ietf.org/html/rfc5280#section-4.2.1.10).',
+      label: 'Permitted URI domains',
     },
     postalCode: {
       editType: 'stringArray',
@@ -1393,6 +1464,16 @@ const pki = {
         'Interval at which to run an auto-tidy operation. This is the time between tidy invocations (after one finishes to the start of the next). Running a manual tidy will reset this duration.',
       fieldGroup: 'default',
     },
+    minStartupBackoffDuration: {
+      editType: 'ttl',
+      helpText: 'The minimum amount of time in seconds auto-tidy will be delayed after startup.',
+      fieldGroup: 'default',
+    },
+    maxStartupBackoffDuration: {
+      editType: 'ttl',
+      helpText: 'The maximum amount of time in seconds auto-tidy will be delayed after startup.',
+      fieldGroup: 'default',
+    },
     issuerSafetyBuffer: {
       editType: 'ttl',
       helpText:
@@ -1449,6 +1530,12 @@ const pki = {
       editType: 'boolean',
       helpText: 'Set to true to enable tidying up the certificate store',
       fieldGroup: 'default',
+      type: 'boolean',
+    },
+    tidyCmpv2NonceStore: {
+      editType: 'boolean',
+      fieldGroup: 'default',
+      helpText: 'Set to true to enable tidying up the CMPv2 nonce store',
       type: 'boolean',
     },
     tidyCrossClusterRevokedCerts: {

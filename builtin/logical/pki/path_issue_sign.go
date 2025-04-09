@@ -339,19 +339,22 @@ func (b *backend) pathSignVerbatim(ctx context.Context, req *logical.Request, da
 	return b.pathIssueSignCert(ctx, req, data, entry, true, true)
 }
 
+// pathIssueSignCert is called by issueSignEmptyCert (to validate an issuer) in which case it is not handling the
+// request, only serving to provide useful (error) information to a request
+// pathIssueSignCert is also the handler for issuing and signing endpoints, in which case it serves requests entirely
 func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, data *framework.FieldData, role *issuing.RoleEntry, useCSR, useCSRValues bool) (*logical.Response, error) {
 	// Error out early if incompatible fields set:
-	metadata, metadataInRequest := data.GetOk("metadata")
+	certMetadata, metadataInRequest := data.GetOk("cert_metadata")
 	if metadataInRequest {
-		err := validateMetadataConfiguration(role)
+		err := validateCertMetadataConfiguration(role)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// If storing the certificate or metadata about this certificate and on a performance standby, forward this request
+	// If storing the certificate or certMetadata about this certificate and on a performance standby, forward this request
 	// on to the primary
-	// Allow performance secondaries to generate and store certificates and metadata locally to them.
+	// Allow performance secondaries to generate and store certificates and certMetadata locally to them.
 	needsStorage := !role.NoStore || (metadataInRequest && !role.NoStoreMetadata && issuing.MetadataPermitted)
 	if needsStorage && b.System().ReplicationState().HasState(consts.ReplicationPerformanceStandby) {
 		return nil, logical.ErrReadOnly
@@ -417,7 +420,7 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 	var parsedBundle *certutil.ParsedCertBundle
 	var warnings []string
 	if useCSR {
-		parsedBundle, warnings, err = signCert(b, input, signingBundle, false, useCSRValues)
+		parsedBundle, warnings, err = signCert(b.System(), input, signingBundle, false, useCSRValues)
 	} else {
 		parsedBundle, warnings, err = generateCert(sc, input, signingBundle, false, rand.Reader)
 	}
@@ -442,6 +445,10 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 		return nil, err
 	}
 
+	if err = issuing.VerifyCertificate(sc.GetContext(), sc.GetStorage(), issuerId, parsedBundle); err != nil {
+		return nil, err
+	}
+
 	if !role.NoStore {
 		err = issuing.StoreCertificate(ctx, req.Storage, b.GetCertificateCounter(), parsedBundle)
 		if err != nil {
@@ -449,13 +456,13 @@ func (b *backend) pathIssueSignCert(ctx context.Context, req *logical.Request, d
 		}
 	}
 
-	if metadataInRequest && len(metadata.(string)) > 0 {
-		metadataBytes, err := base64.StdEncoding.DecodeString(metadata.(string))
+	if metadataInRequest {
+		metadataBytes, err := base64.StdEncoding.DecodeString(certMetadata.(string))
 		if err != nil {
 			// TODO: Should we clean up the original cert here?
 			return nil, err
 		}
-		err = storeMetadata(ctx, req.Storage, issuerId, role.Name, parsedBundle.Certificate, metadataBytes)
+		err = storeCertMetadata(ctx, req.Storage, issuerId, role.Name, parsedBundle.Certificate, metadataBytes)
 		if err != nil {
 			// TODO: Should we clean up the original cert here?
 			return nil, err
@@ -633,3 +640,40 @@ requested common name is allowed by the role policy.
 This path requires a CSR; if you want Vault to generate a private key
 for you, use the issue path instead.
 `
+
+func (b *backend) issueSignEmptyCert(ctx context.Context, req *logical.Request, issuerName string) error {
+	emptyRole := &issuing.RoleEntry{
+		AllowLocalhost:    true,
+		AllowedBaseDomain: "*",
+		AllowAnyName:      true,
+		AllowedDomains:    []string{"*"},
+		AllowBaseDomain:   true,
+		AllowBareDomains:  true,
+		AllowGlobDomains:  true,
+		AllowSubdomains:   true,
+		AllowIPSANs:       true,
+		NoStore:           true,
+		NoStoreMetadata:   true,
+		Issuer:            issuerName,
+		RequireCN:         false,
+		KeyBits:           256,  // Any stored role will have some value here;
+		KeyType:           "ec", // We need more tests with "ec"
+	}
+	schema := map[string]*framework.FieldSchema{}
+	schema = addNonCACommonFields(addIssueAndSignCommonFields(schema))
+	emptyData := &framework.FieldData{
+		Raw: map[string]interface{}{
+			"ttl":        "300s",
+			"issuer_ref": issuerName,
+		},
+		Schema: schema,
+	}
+	resp, err := b.pathIssueSignCert(ctx, req, emptyData, emptyRole, false, false)
+	if err != nil {
+		return fmt.Errorf("certificate path set on issuer %v is not functional: %v", issuerName, err)
+	}
+	if resp.IsError() {
+		return fmt.Errorf("certificate path set on issuer %v is not functional: %v", issuerName, resp.Error())
+	}
+	return nil
+}

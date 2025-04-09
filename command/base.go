@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/vault/api/tokenhelper"
 	"github.com/hashicorp/vault/command/config"
 	"github.com/hashicorp/vault/helper/namespace"
+	"github.com/hashicorp/vault/internalshared/configutil"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
@@ -106,7 +107,7 @@ func (c *BaseCommand) Client() (*api.Client, error) {
 		config.Address = c.flagAddress
 	}
 	if c.flagAgentProxyAddress != "" {
-		config.Address = c.flagAgentProxyAddress
+		config.AgentAddress = c.flagAgentProxyAddress
 	}
 
 	if c.flagOutputCurlString {
@@ -387,11 +388,12 @@ func (c *BaseCommand) flagSet(bit FlagSetBit) *FlagSets {
 			f := set.NewFlagSet("HTTP Options")
 
 			addrStringVar := &StringVar{
-				Name:       flagNameAddress,
-				Target:     &c.flagAddress,
-				EnvVar:     api.EnvVaultAddress,
-				Completion: complete.PredictAnything,
-				Usage:      "Address of the Vault server.",
+				Name:        flagNameAddress,
+				Target:      &c.flagAddress,
+				EnvVar:      api.EnvVaultAddress,
+				Completion:  complete.PredictAnything,
+				Normalizers: []func(string) string{configutil.NormalizeAddr},
+				Usage:       "Address of the Vault server.",
 			}
 
 			if c.flagAddress != "" {
@@ -403,11 +405,12 @@ func (c *BaseCommand) flagSet(bit FlagSetBit) *FlagSets {
 			f.StringVar(addrStringVar)
 
 			agentAddrStringVar := &StringVar{
-				Name:       "agent-address",
-				Target:     &c.flagAgentProxyAddress,
-				EnvVar:     api.EnvVaultAgentAddr,
-				Completion: complete.PredictAnything,
-				Usage:      "Address of the Agent.",
+				Name:        "agent-address",
+				Target:      &c.flagAgentProxyAddress,
+				EnvVar:      api.EnvVaultAgentAddr,
+				Completion:  complete.PredictAnything,
+				Normalizers: []func(string) string{configutil.NormalizeAddr},
+				Usage:       "Address of the Agent.",
 			}
 			f.StringVar(agentAddrStringVar)
 

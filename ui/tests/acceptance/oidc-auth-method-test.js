@@ -8,17 +8,17 @@ import { setupApplicationTest } from 'ember-qunit';
 import { click, fillIn, find, waitUntil } from '@ember/test-helpers';
 import authPage from 'vault/tests/pages/auth';
 import { setupMirage } from 'ember-cli-mirage/test-support';
-import { fakeWindow, buildMessage } from '../helpers/oidc-window-stub';
+import { WindowStub, buildMessage } from 'vault/tests/helpers/oidc-window-stub';
 import sinon from 'sinon';
-import { later, _cancelTimers as cancelTimers } from '@ember/runloop';
 import { Response } from 'miragejs';
+import { setupTotpMfaResponse } from 'vault/tests/helpers/mfa/mfa-helpers';
 
 module('Acceptance | oidc auth method', function (hooks) {
   setupApplicationTest(hooks);
   setupMirage(hooks);
 
   hooks.beforeEach(function () {
-    this.openStub = sinon.stub(window, 'open').callsFake(() => fakeWindow.create());
+    this.openStub = sinon.stub(window, 'open').callsFake(() => new WindowStub());
 
     this.setupMocks = (assert) => {
       this.server.post('/auth/oidc/oidc/auth_url', () => ({
@@ -66,10 +66,10 @@ module('Acceptance | oidc auth method', function (hooks) {
     this.setupMocks(assert);
 
     await this.selectMethod('oidc');
-    later(() => {
+    setTimeout(() => {
       window.postMessage(buildMessage().data, window.origin);
-      cancelTimers();
-    }, 100);
+    }, 50);
+
     await click('[data-test-auth-submit]');
   });
 
@@ -94,9 +94,8 @@ module('Acceptance | oidc auth method', function (hooks) {
     });
 
     await this.selectMethod('oidc', true);
-    later(() => {
+    setTimeout(() => {
       window.postMessage(buildMessage().data, window.origin);
-      cancelTimers();
     }, 50);
     await click('[data-test-auth-submit]');
   });
@@ -105,10 +104,11 @@ module('Acceptance | oidc auth method', function (hooks) {
   test('it should populate oidc auth method on logout', async function (assert) {
     this.setupMocks();
     await this.selectMethod('oidc');
-    later(() => {
+
+    setTimeout(() => {
       window.postMessage(buildMessage().data, window.origin);
-      cancelTimers();
     }, 50);
+
     await click('[data-test-auth-submit]');
     await waitUntil(() => find('[data-test-user-menu-trigger]'));
     await click('[data-test-user-menu-trigger]');
@@ -151,5 +151,20 @@ module('Acceptance | oidc auth method', function (hooks) {
     await fillIn('[data-test-role]', 'test');
     await click('[data-test-auth-submit]');
     assert.dom('[data-test-message-error-description]').hasText('Error fetching role: permission denied');
+  });
+
+  test('it prompts mfa if configured', async function (assert) {
+    assert.expect(1);
+
+    this.setupMocks(assert);
+    this.server.get('/auth/foo/oidc/callback', () => setupTotpMfaResponse('foo'));
+    await this.selectMethod('oidc');
+    setTimeout(() => {
+      window.postMessage(buildMessage().data, window.origin);
+    }, 50);
+
+    await click('[data-test-auth-submit]');
+    await waitUntil(() => find('[data-test-mfa-form]'));
+    assert.dom('[data-test-mfa-form]').exists('it renders TOTP MFA form');
   });
 });

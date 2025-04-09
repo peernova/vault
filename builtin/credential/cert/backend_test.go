@@ -9,7 +9,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -39,6 +38,7 @@ import (
 	vaulthttp "github.com/hashicorp/vault/http"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
+	"github.com/hashicorp/vault/sdk/helper/cryptoutil"
 	"github.com/hashicorp/vault/sdk/helper/tokenutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/hashicorp/vault/vault"
@@ -658,7 +658,7 @@ func TestBackend_NonCAExpiry(t *testing.T) {
 	template.IPAddresses = []net.IP{parsedIP}
 
 	// Private key for CA cert
-	caPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	caPrivateKey, err := cryptoutil.GenerateRSAKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +726,7 @@ func TestBackend_NonCAExpiry(t *testing.T) {
 	template.SerialNumber = big.NewInt(5678)
 
 	template.KeyUsage = x509.KeyUsage(x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign)
-	issuedPrivateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	issuedPrivateKey, err := cryptoutil.GenerateRSAKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -843,7 +843,7 @@ func TestBackend_NonCAExpiry(t *testing.T) {
 	time.Sleep(5 * time.Second)
 
 	// Login attempt after certificate expiry should fail
-	resp, err = b.HandleRequest(context.Background(), loginReq)
+	_, err = b.HandleRequest(context.Background(), loginReq)
 	if err == nil {
 		t.Fatalf("expected error due to expired certificate")
 	}
@@ -1317,6 +1317,8 @@ func TestBackend_ext_singleCert(t *testing.T) {
 			testAccStepLoginWithMetadata(t, connState, "web", map[string]string{"2-1-1-1": "A UTF8String Extension"}, true),
 			testAccStepCert(t, "web", ca, "foo", allowed{metadata_ext: "1.2.3.45"}, false),
 			testAccStepLoginWithMetadata(t, connState, "web", map[string]string{}, true),
+			testAccStepSetConfig(t, config{EnableMetadataOnFailures: true}, connState),
+			testAccStepReadConfig(t, config{EnableMetadataOnFailures: true}, connState),
 		},
 	})
 }
@@ -1728,6 +1730,7 @@ func testAccStepSetConfig(t *testing.T, conf config, connState tls.ConnectionSta
 		ConnState: &connState,
 		Data: map[string]interface{}{
 			"enable_identity_alias_metadata": conf.EnableIdentityAliasMetadata,
+			"enable_metadata_on_failures":    conf.EnableMetadataOnFailures,
 		},
 	}
 }
@@ -1750,6 +1753,20 @@ func testAccStepReadConfig(t *testing.T, conf config, connState tls.ConnectionSt
 
 			if b != conf.EnableIdentityAliasMetadata {
 				t.Fatalf("bad: expected enable_identity_alias_metadata to be %t, got %t", conf.EnableIdentityAliasMetadata, b)
+			}
+
+			metaValueRaw, ok := resp.Data["enable_metadata_on_failures"]
+			if !ok {
+				t.Fatalf("enable_metadata_on_failures not found in response")
+			}
+
+			metaValue, ok := metaValueRaw.(bool)
+			if !ok {
+				t.Fatalf("bad: expected enable_metadata_on_failures to be a bool")
+			}
+
+			if metaValue != conf.EnableMetadataOnFailures {
+				t.Fatalf("bad: expected enable_metadata_on_failures to be %t, got %t", conf.EnableMetadataOnFailures, metaValue)
 			}
 
 			return nil
@@ -1934,6 +1951,23 @@ type allowed struct {
 
 func testAccStepCert(t *testing.T, name string, cert []byte, policies string, testData allowed, expectError bool) logicaltest.TestStep {
 	return testAccStepCertWithExtraParams(t, name, cert, policies, testData, expectError, nil)
+}
+
+func testStepEnableMetadataFailures() logicaltest.TestStep {
+	return logicaltest.TestStep{
+		Operation: logical.UpdateOperation,
+		Path:      "config",
+		ErrorOk:   false,
+		Data: map[string]interface{}{
+			"enable_metadata_on_failures": true,
+		},
+		Check: func(resp *logical.Response) error {
+			if resp != nil && resp.IsError() {
+				return fmt.Errorf("expected nil response got a response error: %v", resp)
+			}
+			return nil
+		},
+	}
 }
 
 func testAccStepCertWithExtraParams(t *testing.T, name string, cert []byte, policies string, testData allowed, expectError bool, extraParams map[string]interface{}) logicaltest.TestStep {
@@ -2178,12 +2212,13 @@ func Test_Renew(t *testing.T) {
 		Raw: map[string]interface{}{
 			"name":        "test",
 			"certificate": ca,
-			"policies":    "foo,bar",
+			// Uppercase B should not cause an issue during renewal
+			"token_policies": "foo,Bar",
 		},
 		Schema: pathCerts(b).Fields,
 	}
 
-	resp, err := b.pathCertWrite(context.Background(), req, fd)
+	_, err = b.pathCertWrite(context.Background(), req, fd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2192,7 +2227,7 @@ func Test_Renew(t *testing.T) {
 		Raw:    map[string]interface{}{},
 		Schema: pathLogin(b).Fields,
 	}
-	resp, err = b.pathLogin(context.Background(), req, empty_login_fd)
+	resp, err := b.pathLogin(context.Background(), req, empty_login_fd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2219,20 +2254,20 @@ func Test_Renew(t *testing.T) {
 	}
 
 	// Change the policies -- this should fail
-	fd.Raw["policies"] = "zip,zap"
-	resp, err = b.pathCertWrite(context.Background(), req, fd)
+	fd.Raw["token_policies"] = "zip,zap"
+	_, err = b.pathCertWrite(context.Background(), req, fd)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	resp, err = b.pathLoginRenew(context.Background(), req, empty_login_fd)
+	_, err = b.pathLoginRenew(context.Background(), req, empty_login_fd)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 
 	// Put the policies back, this should be okay
-	fd.Raw["policies"] = "bar,foo"
-	resp, err = b.pathCertWrite(context.Background(), req, fd)
+	fd.Raw["token_policies"] = "bar,foo"
+	_, err = b.pathCertWrite(context.Background(), req, fd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2251,7 +2286,7 @@ func Test_Renew(t *testing.T) {
 	// Add period value to cert entry
 	period := 350 * time.Second
 	fd.Raw["period"] = period.String()
-	resp, err = b.pathCertWrite(context.Background(), req, fd)
+	_, err = b.pathCertWrite(context.Background(), req, fd)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2272,7 +2307,7 @@ func Test_Renew(t *testing.T) {
 	}
 
 	// Delete CA, make sure we can't renew
-	resp, err = b.pathCertDelete(context.Background(), req, fd)
+	_, err = b.pathCertDelete(context.Background(), req, fd)
 	if err != nil {
 		t.Fatal(err)
 	}

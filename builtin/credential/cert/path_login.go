@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/certutil"
 	"github.com/hashicorp/vault/sdk/helper/cidrutil"
+	"github.com/hashicorp/vault/sdk/helper/locksutil"
 	"github.com/hashicorp/vault/sdk/helper/ocsp"
 	"github.com/hashicorp/vault/sdk/helper/policyutil"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -69,12 +70,20 @@ func (b *backend) loginPathWrapper(wrappedOp func(ctx context.Context, req *logi
 }
 
 func (b *backend) pathLoginResolveRole(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+	config, err := b.Config(ctx, req.Storage)
+	if err != nil {
+		return nil, err
+	}
+	if b.configUpdated.Load() {
+		b.updatedConfig(config)
+	}
+
 	var matched *ParsedCert
 
 	if verifyResp, resp, err := b.verifyCredentials(ctx, req, data); err != nil {
 		return nil, err
 	} else if resp != nil {
-		return resp, nil
+		return certAuthLoginFailureResponse(config, resp, req), nil
 	} else {
 		matched = verifyResp
 	}
@@ -117,7 +126,7 @@ func (b *backend) pathLogin(ctx context.Context, req *logical.Request, data *fra
 	if verifyResp, resp, err := b.verifyCredentials(ctx, req, data); err != nil {
 		return nil, err
 	} else if resp != nil {
-		return resp, nil
+		return certAuthLoginFailureResponse(config, resp, req), nil
 	} else {
 		matched = verifyResp
 	}
@@ -180,6 +189,56 @@ func (b *backend) pathLogin(ctx context.Context, req *logical.Request, data *fra
 	}, nil
 }
 
+func certAuthLoginFailureResponse(config *config, resp *logical.Response, req *logical.Request) *logical.Response {
+	if !config.EnableMetadataOnFailures || !resp.IsError() {
+		return resp
+	}
+	var initialErrMsg string
+	if err := resp.Error(); err != nil {
+		initialErrMsg = err.Error()
+	}
+
+	clientCert, exists := getClientCert(req)
+	if !exists {
+		return logical.ErrorResponse("no client certificate found\n" + initialErrMsg)
+	}
+
+	// Trim these values as they can be anything from any sort of failed certificate
+	// and we don't want to expose audit entries to randomly large strings.
+	const maxChars = 100
+	metadata := map[string]string{
+		"common_name":      trimToMaxChars(clientCert.Subject.CommonName, maxChars),
+		"serial_number":    trimToMaxChars(clientCert.SerialNumber.String(), maxChars),
+		"subject_key_id":   trimToMaxChars(certutil.GetHexFormatted(clientCert.SubjectKeyId, ":"), maxChars),
+		"authority_key_id": trimToMaxChars(certutil.GetHexFormatted(clientCert.AuthorityKeyId, ":"), maxChars),
+	}
+
+	return logical.ErrorResponseWithData(metadata, initialErrMsg)
+}
+
+func getClientCert(req *logical.Request) (*x509.Certificate, bool) {
+	if req == nil || req.Connection == nil || req.Connection.ConnState == nil || req.Connection.ConnState.PeerCertificates == nil {
+		return nil, false
+	}
+	clientCerts := req.Connection.ConnState.PeerCertificates
+	if len(clientCerts) == 0 {
+		return nil, false
+	}
+	clientCert := clientCerts[0]
+	if clientCert == nil || clientCert.IsCA {
+		return nil, false
+	}
+	return clientCert, true
+}
+
+func trimToMaxChars(formatted string, maxSize int) string {
+	if len(formatted) > maxSize {
+		return formatted[:maxSize-3] + "..."
+	}
+
+	return formatted
+}
+
 func (b *backend) pathLoginRenew(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	config, err := b.Config(ctx, req.Storage)
 	if err != nil {
@@ -194,7 +253,7 @@ func (b *backend) pathLoginRenew(ctx context.Context, req *logical.Request, d *f
 		if verifyResp, resp, err := b.verifyCredentials(ctx, req, d); err != nil {
 			return nil, err
 		} else if resp != nil {
-			return resp, nil
+			return certAuthLoginFailureResponse(config, resp, req), nil
 		} else {
 			matched = verifyResp
 		}
@@ -596,15 +655,39 @@ func (b *backend) certificateExtensionsMetadata(clientCert *x509.Certificate, co
 
 func (b *backend) getTrustedCerts(ctx context.Context, storage logical.Storage, certName string) (pool *x509.CertPool, trusted []*ParsedCert, trustedNonCAs []*ParsedCert, conf *ocsp.VerifyConfig) {
 	if !b.trustedCacheDisabled.Load() {
-		if trusted, found := b.trustedCache.Get(certName); found {
+		trusted, found := b.getTrustedCertsFromCache(certName)
+		if found {
 			return trusted.pool, trusted.trusted, trusted.trustedNonCAs, trusted.ocspConf
 		}
 	}
 	return b.loadTrustedCerts(ctx, storage, certName)
 }
 
+func (b *backend) getTrustedCertsFromCache(certName string) (*trusted, bool) {
+	if certName == "" {
+		trusted := b.trustedCacheFull.Load()
+		if trusted != nil {
+			return trusted, true
+		}
+	} else if trusted, found := b.trustedCache.Get(certName); found {
+		return trusted, true
+	}
+	return nil, false
+}
+
 // loadTrustedCerts is used to load all the trusted certificates from the backend
 func (b *backend) loadTrustedCerts(ctx context.Context, storage logical.Storage, certName string) (pool *x509.CertPool, trustedCerts []*ParsedCert, trustedNonCAs []*ParsedCert, conf *ocsp.VerifyConfig) {
+	lock := locksutil.LockForKey(b.trustedCacheLocks, certName)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if !b.trustedCacheDisabled.Load() {
+		trusted, found := b.getTrustedCertsFromCache(certName)
+		if found {
+			return trusted.pool, trusted.trusted, trusted.trustedNonCAs, trusted.ocspConf
+		}
+	}
+
 	pool = x509.NewCertPool()
 	trustedCerts = make([]*ParsedCert, 0)
 	trustedNonCAs = make([]*ParsedCert, 0)
@@ -668,16 +751,30 @@ func (b *backend) loadTrustedCerts(ctx context.Context, storage logical.Storage,
 			conf.QueryAllServers = conf.QueryAllServers || entry.OcspQueryAllServers
 			conf.OcspThisUpdateMaxAge = entry.OcspThisUpdateMaxAge
 			conf.OcspMaxRetries = entry.OcspMaxRetries
+
+			if len(entry.OcspCaCertificates) > 0 {
+				certs, err := certutil.ParseCertsPEM([]byte(entry.OcspCaCertificates))
+				if err != nil {
+					b.Logger().Error("failed to parse ocsp_ca_certificates", "name", name, "error", err)
+					continue
+				}
+				conf.ExtraCas = certs
+			}
 		}
 	}
 
 	if !b.trustedCacheDisabled.Load() {
-		b.trustedCache.Add(certName, &trusted{
+		entry := &trusted{
 			pool:          pool,
 			trusted:       trustedCerts,
 			trustedNonCAs: trustedNonCAs,
 			ocspConf:      conf,
-		})
+		}
+		if certName == "" {
+			b.trustedCacheFull.Store(entry)
+		} else {
+			b.trustedCache.Add(certName, entry)
+		}
 	}
 	return
 }

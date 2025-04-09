@@ -114,5 +114,40 @@ module.exports = [
     source: '/vault/docs/deprecation/faq',
     destination: '/vault/docs/deprecation',
     permanent: true,
+  },
+  {
+    source: '/vault/docs/concepts/lease-explosions',
+    destination: '/vault/docs/configuration/prevent-lease-explosions',
+    permanent: true,
+  },
+  {
+    source: '/vault/docs/troubleshoot/lease-explosions',
+    destination: '/vault/docs/configuration/prevent-lease-explosions',
+    permanent: true,
+  },
+  {
+    source: '/vault/docs/concepts/lease-count-quota-exceeded',
+    destination: '/vault/docs/troubleshoot/lease-count-quota-exceeded',
+    permanent: true,
+  },
+  {
+    source: '/vault/docs/command/web',
+    destination: '/vault/docs/ui/web-cli',
+    permanent: true,
+  },
+  {
+    source: '/vault/api-docs/secret/ad',
+    destination: '/vault/api-docs/secret/ldap',
+    permanent: true,
+  },
+  {
+    source: '/vault/docs/secrets/ad',
+    destination: '/vault/docs/secrets/ldap',
+    permanent: true,
+  },
+  {
+    source: '/vault/docs/secrets/ad/migration-guide',
+    destination: '/vault/docs/v1.18.x/secrets/ad/migration-guide',
+    permanent: true,
   }
 ]

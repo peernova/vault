@@ -1,5 +1,5 @@
-# Copyright (c) HashiCorp, Inc.
-# SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: BUSL-1.1
 
 scenario "dev_single_cluster" {
   description = <<-EOF
@@ -8,74 +8,19 @@ scenario "dev_single_cluster" {
     to improve end-to-end speed. If you wish to perform such verification you'll need to use a
     non-dev scenario instead.
 
-    The scenario supports finding and installing any released 'linux/amd64' or 'linux/arm64' Vault
-    artifact as long as its version is >= 1.8. You can also use the 'artifact:local' variant to
-    build and deploy the current branch!
-
-    In order to execute this scenario you'll need to install the enos CLI:
-      brew tap hashicorp/tap && brew update && brew install hashicorp/tap/enos
-
-    You'll also need access to an AWS account with an SSH keypair.
-    Perform the steps here to get AWS access with Doormat https://eng-handbook.hashicorp.services/internal-tools/enos/common-setup-steps/#authenticate-with-doormat
-    Perform the steps here to get an AWS keypair set up: https://eng-handbook.hashicorp.services/internal-tools/enos/common-setup-steps/#set-your-aws-key-pair-name-and-private-key
-
-    Please note that this scenario requires several inputs variables to be set in order to function
-    properly. While not all variants will require all variables, it's suggested that you look over
-    the scenario outline to determine which variables affect which steps and which have inputs that
-    you should set. You can use the following command to get a textual outline of the entire
-    scenario:
-      enos scenario outline dev_single_cluster
-
-    You can also create an HTML version that is suitable for viewing in web browsers:
-      enos scenario outline dev_single_cluster --format html > index.html
-      open index.html
-
-    To configure the required variables you have a couple of choices. You can create an
-    'enos-local.vars' file in the same 'enos' directory where this scenario is defined. In it you
-    declare your desired variable values. For example, you could copy the following content and
-    then set the values as necessary:
-
-    artifactory_username      = "username@hashicorp.com"
-    artifactory_token         = "<ARTIFACTORY TOKEN VALUE>
-    aws_region                = "us-west-2"
-    aws_ssh_keypair_name      = "<YOUR REGION SPECIFIC KEYPAIR NAME>"
-    aws_ssh_keypair_key_path  = "/path/to/your/private/key.pem"
-    dev_build_local_ui        = false
-    dev_consul_version        = "1.18.1"
-    vault_license_path        = "./support/vault.hclic"
-    vault_product_version     = "1.16.2"
-
-    Alternatively, you can set them in your environment:
-    export ENOS_VAR_aws_region="us-west-2"
-    export ENOS_VAR_vault_license_path="./support/vault.hclic"
-
-    After you've configured your inputs you can list and filter the available scenarios and then
-    subsequently launch and destroy them.
-      enos scenario list --help
-      enos scenario launch --help
-      enos scenario list dev_single_cluster
-      enos scenario launch dev_single_cluster arch:arm64 artifact:local backend:raft distro:ubuntu edition:ce seal:awskms
-
-    When the scenario is finished launching you refer to the scenario outputs to see information
-    related to your cluster. You can use this information to SSH into nodes and/or to interact
-    with vault.
-      enos scenario output dev_single_cluster arch:arm64 artifact:local backend:raft distro:ubuntu edition:ce seal:awskms
-      ssh -i /path/to/your/private/key.pem <PUBLIC_IP>
-      vault status
-
-    After you've finished you can tear down the cluster
-      enos scenario destroy dev_single_cluster arch:arm64 artifact:local backend:raft distro:ubuntu edition:ce seal:awskms
+    For a full tutorial for this scenario, see here:
+    https://eng-handbook.hashicorp.services/internal-tools/enos/tutorial-vault-dev-scenario-single-cluster/
   EOF
 
   // The matrix is where we define all the baseline combinations that enos can utilize to customize
-  // your scenario. By default enos attempts to perform your command an the entire product! Most
-  // of the time you'll want to reduce that by passing in a filter.
+  // your scenario. By default, Enos attempts to perform your command on the entire product of these
+  // possible combinations! Most of the time you'll want to reduce that by passing in a filter.
   // Run 'enos scenario list --help' to see more about how filtering scenarios works in enos.
   matrix {
     arch     = ["amd64", "arm64"]
     artifact = ["local", "deb", "rpm", "zip"]
     backend  = ["consul", "raft"]
-    distro   = ["ubuntu", "rhel"]
+    distro   = ["amzn", "leap", "rhel", "sles", "ubuntu"]
     edition  = ["ce", "ent", "ent.fips1402", "ent.hsm", "ent.hsm.fips1402"]
     seal     = ["awskms", "pkcs11", "shamir"]
 
@@ -107,10 +52,12 @@ scenario "dev_single_cluster" {
   terraform     = terraform.default
 
   // Here we declare all of the providers that we might need for our scenario.
+  // There are two different configurations for the Enos provider, each specifying
+  // SSH transport configs for different Linux distros.
   providers = [
     provider.aws.default,
-    provider.enos.ubuntu,
-    provider.enos.rhel
+    provider.enos.ec2_user,
+    provider.enos.ubuntu
   ]
 
   // These are variable values that are local to our scenario. They are evaluated after external
@@ -119,19 +66,24 @@ scenario "dev_single_cluster" {
     // The enos provider uses different ssh transport configs for different distros (as
     // specified in enos-providers.hcl), and we need to be able to access both of those here.
     enos_provider = {
-      rhel   = provider.enos.rhel
+      amzn   = provider.enos.ec2_user
+      leap   = provider.enos.ec2_user
+      rhel   = provider.enos.ec2_user
+      sles   = provider.enos.ec2_user
       ubuntu = provider.enos.ubuntu
     }
     // We install vault packages from artifactory. If you wish to use one of these variants you'll
     // need to configure your artifactory credentials.
     use_artifactory = matrix.artifact == "deb" || matrix.artifact == "rpm"
+    // The IP version to use for the Vault listener and associated things.
+    ip_version = 4
     // Zip bundles and local builds don't come with systemd units or any associated configuration.
     // When this is true we'll let enos handle this for us.
     manage_service = matrix.artifact == "zip" || matrix.artifact == "local"
     // If you are using an ent edition, you will need a Vault license. Common convention
     // is to store it at ./support/vault.hclic, but you may change this path according
     // to your own preference.
-    vault_install_dir = matrix.artifact == "zip" ? var.vault_install_dir : global.vault_install_dir_packages[matrix.distro]
+    vault_install_dir = matrix.artifact == "zip" || matrix.artifact == "local" ? global.vault_install_dir["bundle"] : global.vault_install_dir["package"]
   }
 
   // Begin scenario steps. These are the steps we'll perform to get your cluster up and running.
@@ -147,15 +99,18 @@ scenario "dev_single_cluster" {
         artifactory_host:
           The artifactory host to search. It's very unlikely that you'll want to change this. The
           default value is the HashiCorp Artifactory instance.
-        artifactory_repo
+        artifactory_repo:
           The artifactory host to search. It's very unlikely that you'll want to change this. The
           default value is where CRT will publish packages.
-        artifactory_username
+        artifactory_username:
           The artifactory username associated with your token. You'll need this if you wish to use
           deb or rpm artifacts! You can request access via Okta.
-        artifactory_token
+        artifactory_token:
           The artifactory token associated with your username. You'll need this if you wish to use
           deb or rpm artifacts! You can create a token by logging into Artifactory via Okta.
+        dev_build_local_ui:
+          If you are not testing any changes in the UI, set to false. This will save time by not
+          building the entire UI. If you need to test the UI, set to true.
         vault_product_version:
           When using the artifact:rpm or artifact:deb variants we'll use this variable to determine
           which version of the Vault pacakge we should fetch from Artifactory.
@@ -334,7 +289,7 @@ scenario "dev_single_cluster" {
     }
 
     variables {
-      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"]["22.04"]
+      ami_id          = step.ec2_info.ami_ids["arm64"]["ubuntu"][global.distro_version["ubuntu"]]
       cluster_tag_key = global.backend_tag_key
       common_tags     = global.tags
       seal_key_names  = step.create_seal_key.resource_names
@@ -368,12 +323,12 @@ scenario "dev_single_cluster" {
     variables {
       cluster_name    = step.create_vault_cluster_backend_targets.cluster_name
       cluster_tag_key = global.backend_tag_key
+      hosts           = step.create_vault_cluster_backend_targets.hosts
       license         = (matrix.backend == "consul" && var.backend_edition == "ent") ? step.read_backend_license.license : null
       release = {
         edition = var.backend_edition
         version = var.dev_consul_version
       }
-      target_hosts = step.create_vault_cluster_backend_targets.hosts
     }
   }
 
@@ -432,16 +387,17 @@ scenario "dev_single_cluster" {
         version = var.dev_consul_version
       } : null
       enable_audit_devices = var.vault_enable_audit_devices
+      hosts                = step.create_vault_cluster_targets.hosts
       install_dir          = local.vault_install_dir
+      ip_version           = local.ip_version
       license              = matrix.edition != "ce" ? step.read_vault_license.license : null
       local_artifact_path  = matrix.artifact == "local" ? abspath(var.vault_artifact_path) : null
       manage_service       = local.manage_service
-      packages             = concat(global.packages, global.distro_packages[matrix.distro])
+      packages             = concat(global.packages, global.distro_packages[matrix.distro][global.distro_version[matrix.distro]])
       release              = matrix.artifact == "zip" ? { version = var.vault_product_version, edition = matrix.edition } : null
       seal_attributes      = step.create_seal_key.attributes
       seal_type            = matrix.seal
       storage_backend      = matrix.backend
-      target_hosts         = step.create_vault_cluster_targets.hosts
     }
   }
 
@@ -459,7 +415,7 @@ scenario "dev_single_cluster" {
 
   output "hosts" {
     description = "The Vault cluster target hosts"
-    value       = step.create_vault_cluster.target_hosts
+    value       = step.create_vault_cluster.hosts
   }
 
   output "private_ips" {
