@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -107,6 +108,19 @@ func decryptPassword(
 		return string(text), nil
 	}
 	return "", fmt.Errorf("error decrypting password - no data recieved")
+}
+
+// This provides the field names for SQLConnectionProducer for field validation in the framework handler.
+func SQLConnectionProducerFieldNames() map[string]any {
+	scp := &SQLConnectionProducer{}
+	rType := reflect.TypeOf(scp).Elem()
+
+	fieldNames := make(map[string]any, rType.NumField())
+	for i := range rType.NumField() {
+		fieldNames[rType.Field(i).Tag.Get("json")] = 1
+	}
+
+	return fieldNames
 }
 
 func (c *SQLConnectionProducer) Initialize(ctx context.Context, conf map[string]interface{}, verifyConnection bool) error {
