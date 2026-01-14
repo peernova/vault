@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package git
@@ -13,9 +13,9 @@ import (
 type (
 	// RebaseMerges is the strategy for handling merge commits in rebases
 	RebaseMerges = string
-	// RebaseMerges is the strategy for rebasing
+	// RebaseStrategy is the strategy for rebasing
 	RebaseStrategy = string
-	// RebaseMerges is the strategy for handling whitespace during rebasing
+	// WhitespaceAction is the strategy for handling whitespace during rebasing
 	WhitespaceAction = string
 )
 
@@ -76,7 +76,7 @@ type RebaseOpts struct {
 	Root                      bool                  // --root
 	Stat                      bool                  // --stat
 	Strategy                  MergeStrategy         // --strategy
-	StragegyOptions           []MergeStrategyOption // --strategy-option=<option>
+	StrategyOptions           []MergeStrategyOption // --strategy-option=<option>
 	UpdateRefs                bool                  // --update-refs
 	Verbose                   bool                  // --verbose
 	Verify                    bool                  // --verify
@@ -296,7 +296,7 @@ func (o *RebaseOpts) Strings() []string {
 		opts = append(opts, fmt.Sprintf("--strategy=%s", string(o.Strategy)))
 	}
 
-	for _, opt := range o.StragegyOptions {
+	for _, opt := range o.StrategyOptions {
 		opts = append(opts, fmt.Sprintf("--strategy-option=%s", string(opt)))
 	}
 

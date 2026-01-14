@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -159,7 +159,7 @@ module('Integration | Component | shamir/dr-token-flow', function (hooks) {
     await render(hbs`<Shamir::DrTokenFlow @action="generate-dr-operation-token" />`);
     await click('[data-test-use-pgp-key-cta]');
     assert.dom('[data-test-choose-pgp-key-form="begin"]').exists('PGP form shows');
-    await click('[data-test-text-toggle]');
+    await click(GENERAL.textToggle);
     await fillIn('[data-test-pgp-file-textarea]', 'some-key-here');
     await click('[data-test-use-pgp-key-button]');
     await click('[data-test-confirm-pgp-key-submit]');
@@ -180,7 +180,7 @@ module('Integration | Component | shamir/dr-token-flow', function (hooks) {
     await render(hbs`<Shamir::DrTokenFlow @action="generate-dr-operation-token" />`);
     await click('[data-test-use-pgp-key-cta]');
     assert.dom('[data-test-choose-pgp-key-form="begin"]').exists('PGP form shows');
-    await click('[data-test-text-toggle]');
+    await click(GENERAL.textToggle);
     await fillIn('[data-test-pgp-file-textarea]', 'some-key-here');
     await click('[data-test-use-pgp-key-button]');
     await click('[data-test-confirm-pgp-key-submit]');

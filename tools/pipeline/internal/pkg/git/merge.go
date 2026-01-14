@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package git
@@ -12,7 +12,7 @@ import (
 type (
 	// MergeStrategy are the merge strategy to use
 	MergeStrategy = string
-	// MergeStrategy are merge strategy options
+	// MergeStrategyOption are merge strategy options
 	MergeStrategyOption = string
 )
 
@@ -48,6 +48,7 @@ type MergeOpts struct {
 	// Options
 	Autostash          bool                  // --autostash
 	DoCommit           bool                  // --commit
+	File               string                // --file=<file>
 	FF                 bool                  // --ff
 	FFOnly             bool                  // --ff-onnly
 	IntoName           string                // --into-name
@@ -70,7 +71,7 @@ type MergeOpts struct {
 	Squash             bool                  // --squash
 	Stat               bool                  // --stat
 	Strategy           MergeStrategy         // --stategy=<strategy>
-	StragegyOptions    []MergeStrategyOption // --strategy-option=<option>
+	StrategyOptions    []MergeStrategyOption // --strategy-option=<option>
 	Verbose            bool                  // --verbose
 
 	// Targets
@@ -132,6 +133,10 @@ func (m *MergeOpts) Strings() []string {
 		opts = append(opts, "--commit")
 	}
 
+	if m.File != "" {
+		opts = append(opts, fmt.Sprintf("--file=%s", m.File))
+	}
+
 	if m.FF {
 		opts = append(opts, "--ff")
 	}
@@ -164,7 +169,7 @@ func (m *MergeOpts) Strings() []string {
 		opts = append(opts, fmt.Sprintf("--strategy=%s", string(m.Strategy)))
 	}
 
-	for _, opt := range m.StragegyOptions {
+	for _, opt := range m.StrategyOptions {
 		opts = append(opts, fmt.Sprintf("--strategy-option=%s", string(opt)))
 	}
 

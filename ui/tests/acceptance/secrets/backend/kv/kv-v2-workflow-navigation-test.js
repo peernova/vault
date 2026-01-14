@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -29,13 +29,11 @@ import {
 import { personas } from 'vault/tests/helpers/kv/policy-generator';
 import {
   addSecretMetadataCmd,
-  clearRecords,
   writeSecret,
   writeVersionedSecret,
 } from 'vault/tests/helpers/kv/kv-run-commands';
 import { FORM, PAGE } from 'vault/tests/helpers/kv/kv-selectors';
 import { GENERAL } from 'vault/tests/helpers/general-selectors';
-import { SECRET_ENGINE_SELECTORS as SES } from 'vault/tests/helpers/secret-engine/secret-engine-selectors';
 import { setupControlGroup, grantAccess } from 'vault/tests/helpers/control-groups';
 
 const secretPath = `my-#:$=?-secret`;
@@ -45,7 +43,7 @@ const secretPathUrlEncoded = `my-%23:$=%3F-secret`;
 const ALL_TABS = ['Overview', 'Secret', 'Metadata', 'Paths', 'Version History'];
 const navToBackend = async (backend) => {
   await visit(`/vault/secrets`);
-  return click(SES.secretsBackendLink(backend));
+  return click(`${GENERAL.tableData(`${backend}/`, 'path')} a`);
 };
 const assertCorrectBreadcrumbs = (assert, expected) => {
   assert.dom(PAGE.breadcrumbs).hasText(expected.join(' '));
@@ -242,9 +240,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
       const token = await runCmd(
         tokenWithPolicyCmd('admin', personas.admin(this.backend) + personas.admin(this.emptyBackend))
       );
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
     test('empty backend - breadcrumbs, title, tabs, emptyState (a)', async function (assert) {
       assert.expect(23);
@@ -599,9 +595,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         ),
         createTokenCmd(`data-reader-${this.backend}`),
       ]);
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
     test('empty backend - breadcrumbs, title, tabs, emptyState (dr)', async function (assert) {
       assert.expect(16);
@@ -631,7 +625,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
       assert.dom(PAGE.list.overviewCard).exists('renders overview card');
 
       await typeIn(PAGE.list.overviewInput, 'directory/');
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
       assert
         .dom('[data-test-inline-error-message]')
         .hasText('You do not have the required permissions or the directory does not exist.');
@@ -665,7 +659,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         .doesNotExist('List filter input does not render because no list capabilities');
 
       await typeIn(PAGE.list.overviewInput, 'app/nested/secret');
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
 
       assert.strictEqual(
         currentURL(),
@@ -699,7 +693,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
 
       // Navigate to secret
       await typeIn(PAGE.list.overviewInput, secretPath);
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
 
       assert.strictEqual(
         currentURL(),
@@ -761,7 +755,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
       assert.dom(PAGE.title).hasText(`${backend} version 2`, 'title correct on secrets list');
 
       await typeIn(PAGE.list.overviewInput, 'app/nested/secret');
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
       assertCorrectBreadcrumbs(assert, ['Secrets', backend, 'app', 'nested', 'secret']);
       assert.dom(PAGE.title).hasText('app/nested/secret', 'title correct on secret detail');
 
@@ -792,9 +786,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         createTokenCmd(`data-reader-list-${this.backend}`),
       ]);
 
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
     test('empty backend - breadcrumbs, title, tabs, emptyState (dlr)', async function (assert) {
       assert.expect(15);
@@ -857,7 +849,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         .dom(PAGE.list.overviewInput)
         .hasValue('app/', 'overview card is pre-filled with directory param');
       await typeIn(PAGE.list.overviewInput, 'nested/secret');
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
 
       assert.strictEqual(
         currentURL(),
@@ -985,9 +977,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         ),
         createTokenCmd(`metadata-maintainer-${this.backend}`),
       ]);
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
     test('empty backend - breadcrumbs, title, tabs, emptyState (mm)', async function (assert) {
       assert.expect(15);
@@ -1208,9 +1198,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
         ),
         createTokenCmd(`secret-creator-${this.backend}`),
       ]);
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
     test('empty backend - breadcrumbs, title, tabs, emptyState (sc)', async function (assert) {
       assert.expect(15);
@@ -1262,7 +1250,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
 
       // Navigate to secret
       await typeIn(PAGE.list.overviewInput, 'app/nested/secret');
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
 
       assert.strictEqual(
         currentURL(),
@@ -1300,7 +1288,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
       await navToBackend(backend);
 
       await typeIn(PAGE.list.overviewInput, secretPath);
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
       assert.strictEqual(
         currentURL(),
         `/vault/secrets/${backend}/kv/${secretPathUrlEncoded}`,
@@ -1387,7 +1375,7 @@ module('Acceptance | kv-v2 workflow | navigation', function (hooks) {
       assert.dom(PAGE.title).hasText(`${backend} version 2`, 'correct page title for secret list');
 
       await typeIn(PAGE.list.overviewInput, secretPath);
-      await click(PAGE.list.overviewButton);
+      await click(GENERAL.submitButton);
       assertCorrectBreadcrumbs(assert, ['Secrets', backend, secretPath]);
       assert.dom(PAGE.title).hasText(secretPath, 'correct page title for secret detail');
 
@@ -1444,9 +1432,7 @@ path "${this.backend}/subkeys/*" {
 `;
       const { userToken } = await setupControlGroup({ userPolicy, backend: this.backend });
       this.userToken = userToken;
-      await login(userToken);
-      clearRecords(this.store);
-      return;
+      return login(userToken);
     });
     test('can access nested secret (cg)', async function (assert) {
       assert.expect(44);
@@ -1549,7 +1535,7 @@ path "${this.backend}/subkeys/*" {
         'redirects to access control group route'
       );
       await grantAccess({
-        apiPath: `${backend}/data/${encodeURIComponent(secretPath)}`,
+        apiPath: `${backend}/data/${secretPath}`,
         originUrl: `/vault/secrets/${backend}/kv/list`,
         userToken: this.userToken,
         backend: this.backend,
@@ -1605,7 +1591,7 @@ path "${this.backend}/subkeys/*" {
       const url = find('[data-test-control-error="href"]').innerText;
       await visit(url);
       await grantAccess({
-        apiPath: `${backend}/data/${encodeURIComponent(secretPath)}`,
+        apiPath: `${backend}/data/${secretPath}`,
         originUrl: `/vault/secrets/${backend}/kv/${secretPathUrlEncoded}/metadata`,
         userToken: this.userToken,
         backend: this.backend,
@@ -1636,7 +1622,7 @@ path "${this.backend}/subkeys/*" {
       const url = find('[data-test-control-error="href"]').innerText;
       await visit(url);
       await grantAccess({
-        apiPath: `${backend}/data/${encodeURIComponent(secretPath)}`,
+        apiPath: `${backend}/data/${secretPath}`,
         originUrl: `/vault/secrets/${backend}/kv/${secretPathUrlEncoded}/patch`,
         userToken: this.userToken,
         backend: this.backend,
@@ -1675,7 +1661,7 @@ path "${this.backend}/subkeys/*" {
       const url = find('[data-test-control-error="href"]').innerText;
       await visit(url);
       await grantAccess({
-        apiPath: `${backend}/data/${encodeURIComponent(secretPath)}`,
+        apiPath: `${backend}/data/${secretPath}`,
         originUrl: `/vault/secrets/${backend}/kv/${secretPathUrlEncoded}/metadata`,
         userToken: this.userToken,
         backend: this.backend,
@@ -1695,9 +1681,7 @@ path "${this.backend}/subkeys/*" {
         ),
         createTokenCmd(`secret-patcher-${this.backend}`),
       ]);
-      await login(token);
-      clearRecords(this.store);
-      return;
+      return login(token);
     });
 
     test('it navigates to patch a secret from overview', async function (assert) {

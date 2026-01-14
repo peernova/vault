@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -11,5 +11,5 @@ export default create({
   ...fields,
   visit: visitable('/vault/settings/auth/configure/:path/:section'),
   flash: flashMessage,
-  save: clickable('[data-test-save-config]'),
+  save: clickable('[data-test-submit-config]'),
 });

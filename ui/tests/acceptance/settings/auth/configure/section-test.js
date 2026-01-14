@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -7,7 +7,7 @@ import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { setupMirage } from 'ember-cli-mirage/test-support';
 import { create } from 'ember-cli-page-object';
-import { fillIn, settled, findAll } from '@ember/test-helpers';
+import { fillIn, settled, findAll, click } from '@ember/test-helpers';
 import { v4 as uuidv4 } from 'uuid';
 
 import enablePage from 'vault/tests/pages/settings/auth/enable';
@@ -31,26 +31,30 @@ module('Acceptance | settings/auth/configure/section', function (hooks) {
 
   test('it can save options', async function (assert) {
     assert.expect(6);
-    this.server.post(`/sys/mounts/auth/:path/tune`, function (schema, request) {
+
+    const path = `approle-save-${this.uid}`;
+    const type = 'approle';
+    const section = 'options';
+
+    this.server.post(`/sys/mounts/auth/${path}/tune`, function (schema, request) {
       const body = JSON.parse(request.requestBody);
       const keys = Object.keys(body);
       assert.strictEqual(body.token_type, 'batch', 'passes new token type');
       assert.true(keys.includes('default_lease_ttl'), 'passes default_lease_ttl on tune');
       assert.true(keys.includes('max_lease_ttl'), 'passes max_lease_ttl on tune');
       assert.true(keys.includes('description'), 'passes updated description on tune');
-      request.passthrough();
+      return request.passthrough();
     });
-    const path = `approle-save-${this.uid}`;
-    const type = 'approle';
-    const section = 'options';
+
     await enablePage.enable(type, path);
     await page.visit({ path, section });
     await fillIn(GENERAL.inputByAttr('description'), 'This is Approle!');
     assert
-      .dom(GENERAL.inputByAttr('config.tokenType'))
+      .dom(GENERAL.inputByAttr('config.token_type'))
       .hasValue('default-service', 'as default the token type selected is default-service.');
-    await fillIn(GENERAL.inputByAttr('config.tokenType'), 'batch');
-    await page.save();
+    await fillIn(GENERAL.inputByAttr('config.token_type'), 'batch');
+    await click(GENERAL.submitButton);
+
     assert.strictEqual(
       page.flash.latestMessage,
       `The configuration was saved successfully.`,

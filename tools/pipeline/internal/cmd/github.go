@@ -1,53 +1,69 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package cmd
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	gh "github.com/google/go-github/v68/github"
+	"github.com/google/go-github/v74/github"
 	"github.com/hashicorp/vault/tools/pipeline/internal/pkg/git"
+	"github.com/shurcooL/githubv4"
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 type githubCommandState struct {
-	Github *gh.Client
-	Git    *git.Client
+	Git      *git.Client
+	GithubV3 *github.Client
+	GithubV4 *githubv4.Client
 }
 
 var githubCmdState = &githubCommandState{
-	Github: gh.NewClient(nil),
-	Git:    git.NewClient(git.WithLoadTokenFromEnv()),
+	GithubV3: github.NewClient(nil),
+	GithubV4: githubv4.NewClient(nil),
+	Git:      git.NewClient(git.WithLoadTokenFromEnv()),
 }
 
 func newGithubCmd() *cobra.Command {
-	github := &cobra.Command{
+	githubCmd := &cobra.Command{
 		Use:   "github",
 		Short: "Github commands",
 		Long:  "Github commands",
-	}
-	github.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		if token, set := os.LookupEnv("GITHUB_TOKEN"); set {
-			githubCmdState.Github = githubCmdState.Github.WithAuthToken(token)
-		} else {
-			fmt.Println("\x1b[1;33;49mWARNING\x1b[0m: GITHUB_TOKEN has not been set. While not always required for read actions on public repositories you're likely to get throttled without it")
-		}
-		return nil
-	}
-	github.AddCommand(newGithubCreateCmd())
-	github.AddCommand(newGithubListCmd())
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if token, set := os.LookupEnv("GITHUB_TOKEN"); set {
+				githubCmdState.GithubV3 = githubCmdState.GithubV3.WithAuthToken(token)
+				githubCmdState.GithubV4 = githubv4.NewClient(
+					oauth2.NewClient(context.Background(),
+						oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}),
+					),
+				)
+			} else {
+				fmt.Println("\x1b[1;33;49mWARNING\x1b[0m: GITHUB_TOKEN has not been set. While not always required for read actions on public repositories you're likely to get throttled without it")
+			}
 
-	return github
+			return nil
+		},
+	}
+
+	githubCmd.AddCommand(newGithubCheckCmd())
+	githubCmd.AddCommand(newGithubCloseCmd())
+	githubCmd.AddCommand(newGithubCopyCmd())
+	githubCmd.AddCommand(newGithubCreateCmd())
+	githubCmd.AddCommand(newGithubFindCmd())
+	githubCmd.AddCommand(newGithubListCmd())
+	githubCmd.AddCommand(newGithubSyncCmd())
+
+	return githubCmd
 }
 
 func writeToGithubOutput(key string, bytes []byte) error {
 	devPath, ok := os.LookupEnv("GITHUB_OUTPUT")
 	if !ok {
-		return errors.New("$GITHUB_OUTPUT has not been set. Cannot write changed files to it")
+		return fmt.Errorf("$GITHUB_OUTPUT has not been set. Cannot write %s to it", key)
 	}
 
 	expanded, err := filepath.Abs(devPath)
@@ -61,7 +77,7 @@ func writeToGithubOutput(key string, bytes []byte) error {
 	}
 	defer func() { _ = dev.Close() }()
 
-	_, err = dev.Write(append([]byte(key+"="), bytes...))
+	_, err = dev.Write(append(append([]byte(key+"="), bytes...), []byte("\n")...))
 	if err != nil {
 		return fmt.Errorf("failed to write key %s to $GITHUB_OUTPUT: %w", key, err)
 	}

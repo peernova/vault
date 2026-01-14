@@ -1,17 +1,19 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
 import Route from '@ember/routing/route';
 import { service } from '@ember/service';
+import SecretsEngineResource from 'vault/resources/secrets/engine';
 
-import type Store from '@ember-data/store';
+import type ApiService from 'vault/services/api';
 
 export default class SecretsBackends extends Route {
-  @service declare readonly store: Store;
+  @service declare readonly api: ApiService;
 
-  model() {
-    return this.store.query('secret-engine', {});
+  async model() {
+    const { secret } = await this.api.sys.internalUiListEnabledVisibleMounts();
+    return this.api.responseObjectToArray(secret, 'path').map((engine) => new SecretsEngineResource(engine));
   }
 }

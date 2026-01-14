@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -89,5 +89,12 @@ export default class ManageNamespacesController extends Controller {
     } catch (error) {
       this.flashMessages.danger('There was an error refreshing the namespace list.');
     }
+  }
+
+  @action
+  switchNamespace(targetNamespace) {
+    this.router.transitionTo('vault.cluster.dashboard', {
+      queryParams: { namespace: targetNamespace },
+    });
   }
 }

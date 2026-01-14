@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package cmd
@@ -6,12 +6,12 @@ package cmd
 import "github.com/spf13/cobra"
 
 func newReleasesCmd() *cobra.Command {
-	releases := &cobra.Command{
+	releasesCmd := &cobra.Command{
 		Use:   "releases",
 		Short: "Releases API related tasks",
 		Long:  "Releases API related tasks",
 	}
-	releases.AddCommand(newReleasesListCmd())
+	releasesCmd.AddCommand(newReleasesListCmd())
 
-	return releases
+	return releasesCmd
 }

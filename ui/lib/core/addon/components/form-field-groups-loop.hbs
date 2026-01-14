@@ -1,5 +1,5 @@
 {{!
-  Copyright (c) HashiCorp, Inc.
+  Copyright IBM Corp. 2016, 2025
   SPDX-License-Identifier: BUSL-1.1
 }}
 
@@ -28,7 +28,7 @@
           @closedLabel={{group}}
           @onClick={{fn (mut (get @model prop))}}
           class="is-block"
-          data-test-toggle-group={{group}}
+          data-test-button={{group}}
         />
         {{#if (get @model prop)}}
           <div class="box is-marginless">

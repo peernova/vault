@@ -1,10 +1,11 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package vault
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -135,6 +136,7 @@ func NewSystemBackend(core *Core, logger log.Logger, config *logical.BackendConf
 				"leases/lookup/*",
 				"storage/raft/snapshot-auto/config/*",
 				"leases",
+				"reporting/scan",
 				"internal/inspect/*",
 				"internal/counters/activity/export",
 				// sys/seal and sys/step-down actually have their sudo requirement enforced through hardcoding
@@ -188,6 +190,7 @@ func NewSystemBackend(core *Core, logger log.Logger, config *logical.BackendConf
 			LocalStorage: []string{
 				expirationSubPath,
 				countersSubPath,
+				rotationLocalSubPath,
 			},
 
 			SealWrapStorage: []string{
@@ -538,6 +541,10 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, _ *logica
 		return logical.ErrorResponse("version %q is not allowed because 'builtin' is a reserved metadata identifier", pluginVersion), nil
 	}
 
+	if download := d.Get("download").(bool); download {
+		return logical.ErrorResponse("download is an enterprise only feature"), nil
+	}
+
 	sha256 := d.Get("sha256").(string)
 	if sha256 == "" {
 		sha256 = d.Get("sha_256").(string)
@@ -553,7 +560,11 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, _ *logica
 
 	command := d.Get("command").(string)
 	ociImage := d.Get("oci_image").(string)
-	if command == "" && ociImage == "" {
+	var resp logical.Response
+
+	if sha256 == "" && command != "" {
+		resp.AddWarning(fmt.Sprintf("When sha256 is unspecified, a plugin artifact is expected for registration and the command parameter %q will be ignored.", command))
+	} else if sha256 != "" && (command == "" && ociImage == "") {
 		return logical.ErrorResponse("must provide at least one of command or oci_image"), nil
 	}
 
@@ -619,7 +630,11 @@ func (b *SystemBackend) handlePluginCatalogUpdate(ctx context.Context, _ *logica
 		return nil, err
 	}
 
-	return nil, nil
+	if len(resp.Warnings) == 0 {
+		return nil, nil
+	}
+
+	return &resp, nil
 }
 
 func (b *SystemBackend) handlePluginCatalogRead(ctx context.Context, _ *logical.Request, d *framework.FieldData) (*logical.Response, error) {
@@ -1512,6 +1527,11 @@ func (b *SystemBackend) handleMount(ctx context.Context, req *logical.Request, d
 	sealWrap := data.Get("seal_wrap").(bool)
 	externalEntropyAccess := data.Get("external_entropy_access").(bool)
 	options := data.Get("options").(map[string]string)
+
+	if !b.Core.IsMountTypeAllowed(logicalType) {
+		return logical.ErrorResponse("mounts of type %q are not supported by license", logicalType),
+			logical.ErrInvalidRequest
+	}
 
 	var config MountConfig
 	var apiConfig APIMountConfig
@@ -3677,7 +3697,7 @@ func (b *SystemBackend) handlePoliciesSet(policyType PolicyType) framework.Opera
 		}
 
 		// Update the policy
-		if err := b.Core.policyStore.SetPolicy(ctx, policy); err != nil {
+		if err := b.Core.policyStore.SetPolicyWithRequest(ctx, policy, req); err != nil {
 			return handleError(err)
 		}
 
@@ -3697,7 +3717,7 @@ func (b *SystemBackend) handlePoliciesDelete(policyType PolicyType) framework.Op
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		name := data.Get("name").(string)
 
-		if err := b.Core.policyStore.DeletePolicy(ctx, name, policyType); err != nil {
+		if err := b.Core.policyStore.DeletePolicyWithRequest(ctx, name, policyType, req); err != nil {
 			return handleError(err)
 		}
 		return nil, nil
@@ -3705,7 +3725,8 @@ func (b *SystemBackend) handlePoliciesDelete(policyType PolicyType) framework.Op
 }
 
 type passwordPolicyConfig struct {
-	HCLPolicy string `json:"policy"`
+	HCLPolicy     string `json:"policy"`
+	EntropySource string `json:"entropy_source,omitempty"`
 }
 
 func getPasswordPolicyKey(policyName string) string {
@@ -3758,6 +3779,15 @@ func (*SystemBackend) handlePoliciesPasswordSet(ctx context.Context, req *logica
 			fmt.Sprintf("passwords must be between %d and %d characters", minPasswordLength, maxPasswordLength))
 	}
 
+	entropySource := data.Get("entropy_source").(string)
+	switch entropySource {
+	case "":
+	case "seal":
+	case "platform":
+	default:
+		return nil, logical.CodedError(http.StatusBadRequest, fmt.Sprintf("unsupported entropy source %s", entropySource))
+	}
+
 	// Attempt to construct a test password from the rules to ensure that the policy isn't impossible
 	var testPassword []rune
 
@@ -3799,7 +3829,8 @@ func (*SystemBackend) handlePoliciesPasswordSet(ctx context.Context, req *logica
 	}
 
 	cfg := passwordPolicyConfig{
-		HCLPolicy: rawPolicy,
+		HCLPolicy:     rawPolicy,
+		EntropySource: entropySource,
 	}
 	entry, err := logical.StorageEntryJSON(getPasswordPolicyKey(policyName), cfg)
 	if err != nil {
@@ -3834,6 +3865,10 @@ func (*SystemBackend) handlePoliciesPasswordGet(ctx context.Context, req *logica
 		Data: map[string]interface{}{
 			"policy": cfg.HCLPolicy,
 		},
+	}
+
+	if cfg.EntropySource != "" {
+		resp.Data["entropy_source"] = cfg.EntropySource
 	}
 
 	return resp, nil
@@ -3875,7 +3910,7 @@ func (*SystemBackend) handlePoliciesPasswordDelete(ctx context.Context, req *log
 }
 
 // handlePoliciesPasswordGenerate generates a password from the specified password policy
-func (*SystemBackend) handlePoliciesPasswordGenerate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *SystemBackend) handlePoliciesPasswordGenerate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	policyName := data.Get("name").(string)
 	if policyName == "" {
 		return nil, logical.CodedError(http.StatusBadRequest, "missing policy name")
@@ -3895,7 +3930,11 @@ func (*SystemBackend) handlePoliciesPasswordGenerate(ctx context.Context, req *l
 			"stored password policy configuration failed to parse")
 	}
 
-	password, err := policy.Generate(ctx, nil)
+	rng, err := b.Core.GetConfigurableRNG(cfg.EntropySource, crand.Reader)
+	if err != nil {
+		return nil, logical.CodedError(http.StatusBadRequest, fmt.Sprintf("failed to retrieve rng: %v", err))
+	}
+	password, err := policy.Generate(ctx, rng)
 	if err != nil {
 		return nil, logical.CodedError(http.StatusInternalServerError,
 			fmt.Sprintf("failed to generate password from policy: %s", err))
@@ -5320,16 +5359,18 @@ func (b *SystemBackend) pathInternalUIResultantACL(ctx context.Context, req *log
 		walkFn(exact, s, v)
 		return false
 	}
+	acl.exactRules.Walk(exactWalkFn)
+	resp.Data["exact_paths"] = exact
 
+	// Combine glob (prefix) and segment wildcard (+) paths into glob_paths
 	globWalkFn := func(s string, v interface{}) bool {
 		walkFn(glob, s, v)
 		return false
 	}
-
-	acl.exactRules.Walk(exactWalkFn)
 	acl.prefixRules.Walk(globWalkFn)
-
-	resp.Data["exact_paths"] = exact
+	for s, v := range acl.segmentWildcardPaths {
+		walkFn(glob, s, v)
+	}
 	resp.Data["glob_paths"] = glob
 
 	return resp, nil
@@ -6915,6 +6956,11 @@ Must already be present on the machine.`,
 		`The Vault plugin runtime to use when running the plugin.`,
 		"",
 	},
+	"plugin-catalog_download": {
+		`Automatically downloads official HashiCorp plugins
+from releases.hashicorp.com (beta)`,
+		"",
+	},
 	"plugin-catalog-pins": {
 		"Configures pinned plugin versions from the plugin catalog",
 		`
@@ -7144,6 +7190,11 @@ This path responds to the following HTTP methods.
 		"Count of active clients so far this month.",
 		"Count of active clients so far this month.",
 	},
+	"activity-cumulative": {
+		"Cumulative count of clients under each namespace.",
+		`Cumulative count of clients under each namespace.
+		A cumulative count is the sum of the clients belonging to a namespace and all its child namespaces.`,
+	},
 	"activity-config": {
 		"Control the collection and reporting of client counts.",
 		"Control the collection and reporting of client counts.",
@@ -7216,5 +7267,9 @@ This path responds to the following HTTP methods.
 	"trim_request_trailing_slashes": {
 		`Whether to trim a trailing slash on incoming requests to this mount`,
 		"",
+	},
+	"pki-certificate-count": {
+		"Count of PKI certificates issued and stored by PKI backends on this cluster",
+		"Count of PKI certificates issued and stored by PKI backends on this cluster",
 	},
 }

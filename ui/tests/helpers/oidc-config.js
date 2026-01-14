@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -12,7 +12,6 @@ export const SELECTORS = {
   oidcClientCreateButton: '[data-test-oidc-configure]',
   oidcRouteTabs: '[data-test-oidc-tabs]',
   oidcLandingImg: '[data-test-oidc-img]',
-  confirmActionButton: '[data-test-confirm-button]',
   inlineAlert: '[data-test-inline-alert]',
   // client route
   clientSaveButton: '[data-test-oidc-client-save]',

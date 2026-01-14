@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 import { validate } from 'vault/utils/forms/validate';
@@ -13,16 +13,18 @@ export type FormOptions = {
   isNew?: boolean;
 };
 
-export default class Form {
-  [key: string]: unknown; // Add an index signature to allow dynamic property assignment for set shim
-  declare data: Record<string, unknown>;
+export default class Form<T extends object> {
+  declare data: T;
   declare validations: Validations;
-  declare formFields: FormField[];
-  declare formFieldGroups: FormFieldGroup[];
   declare isNew: boolean;
 
-  constructor(data = {}, options: FormOptions = {}, validations?: Validations) {
-    this.data = { ...data };
+  // used by proxy to determine if the property being accessed is a form field
+  // override these in subclasses to define additional/different fields defined on the class
+  fieldProps = ['formFields'];
+  fieldGroupProps = ['formFieldGroups'];
+
+  constructor(data: Partial<T> = {}, options: FormOptions = {}, validations?: Validations) {
+    this.data = { ...data } as T;
     this.isNew = options.isNew || false;
     // typically this would be defined on the subclass
     // if validations are conditional, it may be preferable to define them during instantiation
@@ -32,18 +34,38 @@ export default class Form {
     // to ease migration from Ember Data Models, return a proxy that forwards get/set to the data object for form field props
     // this allows for form field properties to be accessed directly on the class rather than form.data.someField
     const proxyTarget = (target: this, prop: string) => {
-      // check if the property that is being accessed is a form field
-      let formFields = Array.isArray(target.formFields) ? target.formFields : [];
-      // in the case of formFieldGroups we need extract the fields out into a flat array
-      if (Array.isArray(target.formFieldGroups)) {
-        formFields = target.formFieldGroups.reduce((arr: FormField[], group) => {
-          const values = Object.values(group)[0] || [];
-          return [...arr, ...values];
+      try {
+        // check if the property that is being accessed is a form field
+        const fields = this.fieldProps.reduce((fields: FormField[], prop) => {
+          const formFields = target[prop as keyof this];
+          if (Array.isArray(formFields)) {
+            fields.push(...formFields);
+          }
+          return fields;
         }, []);
+        // in the case of formFieldGroups we need extract the fields out into a flat array
+        const groupFields = this.fieldGroupProps.reduce((groupFields: FormField[], prop) => {
+          const formFieldGroups = target[prop as keyof this];
+          if (Array.isArray(formFieldGroups)) {
+            const fields = formFieldGroups.reduce((arr: FormField[], group: FormFieldGroup) => {
+              const values = Object.values(group)[0] || [];
+              return [...arr, ...values];
+            }, []);
+            groupFields.push(...fields);
+          }
+          return groupFields;
+        }, []);
+        // combine the formFields and formGroupFields into a single array
+        const allFields = [...fields, ...groupFields];
+        const formDataKeys = allFields.map((field) => field.name) || [];
+        // if the property is a form field return the data object as the target, otherwise return the original target (this)
+        // account for nested form data properties like 'config.maxLeaseTtl' when accessing the object like this.config
+        const isDataProp = formDataKeys.some((key) => key === prop || key.split('.').includes(prop));
+        return !Reflect.has(target, prop) && isDataProp ? target.data : target;
+      } catch (e) {
+        // if this fails for any reason return the target object
+        return target;
       }
-      const formDataKeys = formFields.map((field) => field.name) || [];
-      // if the property is a form field return the data object as the target, otherwise return the original target (this)
-      return !Reflect.has(target, prop) && formDataKeys.includes(prop) ? target.data : target;
     };
 
     return new Proxy(this, {

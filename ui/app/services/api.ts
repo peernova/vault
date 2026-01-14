@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -18,7 +18,7 @@ import {
   ResponseError,
 } from '@hashicorp/vault-client-typescript';
 import config from 'vault/config/environment';
-import { waitForPromise } from '@ember/test-waiters';
+import { waitForPromise, waitFor } from '@ember/test-waiters';
 
 import type AuthService from 'vault/services/auth';
 import type NamespaceService from 'vault/services/namespace';
@@ -65,8 +65,9 @@ export default class ApiService extends Service {
     const headers = new Headers(init.headers);
     // unauthenticated or clientToken requests should set the header in initOverrides
     // unauthenticated value should be empty string, not undefined or null
-    if (!headers.has('X-Vault-Token')) {
-      headers.set('X-Vault-Token', this.authService.currentToken);
+    const { currentToken } = this.authService;
+    if (!headers.has('X-Vault-Token') && currentToken) {
+      headers.set('X-Vault-Token', currentToken);
     }
     if (init.method === 'PATCH') {
       headers.set('Content-Type', 'application/merge-patch+json');
@@ -83,7 +84,7 @@ export default class ApiService extends Service {
   };
 
   // -- Post Request Middleware --
-  showWarnings = async (context: ResponseContext) => {
+  showWarnings = waitFor(async (context: ResponseContext) => {
     const response = context.response.clone();
     // if the response is empty, don't try to parse it
     if (response.headers.get('Content-Length')) {
@@ -95,15 +96,40 @@ export default class ApiService extends Service {
         });
       }
     }
-  };
+  });
 
-  deleteControlGroupToken = async (context: ResponseContext) => {
-    const { url } = context;
-    const controlGroupToken = this.controlGroup.tokenForUrl(url);
-    if (controlGroupToken) {
-      this.controlGroup.deleteControlGroupToken(controlGroupToken.accessor);
+  checkControlGroup = waitFor(async (context: ResponseContext) => {
+    const response = context.response.clone();
+    const { headers } = response;
+
+    // since control group requests are forwarded to /v1/sys/wrapping/unwrap we cannot use controlGroup.tokenForUrl here
+    // instead, we can check if tokenToUnwrap exists on the service and compare the token value with the request header value
+    if (this.controlGroup.tokenToUnwrap) {
+      const { token, accessor } = this.controlGroup.tokenToUnwrap || {};
+      const requestHeaders = context.init.headers as Headers;
+
+      if (requestHeaders.get('X-Vault-Token') === token) {
+        this.controlGroup.deleteControlGroupToken(accessor);
+      }
     }
-  };
+    // if the requested path is locked by a control group we need to create a new error response
+    if (headers.get('Content-Length')) {
+      const json = await response.json();
+      const wrapTtl = headers.get('X-Vault-Wrap-TTL');
+      const isLockedByControlGroup = this.controlGroup.isRequestedPathLocked(json, wrapTtl);
+
+      if (isLockedByControlGroup) {
+        const error = {
+          message: 'Control Group encountered',
+          isControlGroupError: true,
+          ...json.wrap_info,
+        };
+        return new Response(JSON.stringify(error), { headers, status: 403, statusText: 'Forbidden' });
+      }
+    }
+
+    return;
+  });
   // --- End Middleware ---
 
   configuration = new Configuration({
@@ -113,7 +139,7 @@ export default class ApiService extends Service {
       { pre: this.getControlGroupToken },
       { pre: this.setHeaders },
       { post: this.showWarnings },
-      { post: this.deleteControlGroupToken },
+      { post: this.checkControlGroup },
     ],
     fetchApi: (...args: [Request]) => {
       return waitForPromise(window.fetch(...args));
@@ -136,6 +162,8 @@ export default class ApiService extends Service {
         namespace: 'X-Vault-Namespace',
         token: 'X-Vault-Token',
         wrap: 'X-Vault-Wrap-TTL',
+        recoverSnapshotId: 'X-Vault-Recover-Snapshot-Id',
+        recoverSourcePath: 'X-Vault-Recover-Source-Path',
       }[key] as keyof XVaultHeaders;
 
       headers[headerKey] = headerMap[key as keyof HeaderMap];
@@ -147,18 +175,25 @@ export default class ApiService extends Service {
   // convenience method for updating the query params object on the request context
   // eg. this.api.sys.uiConfigListCustomMessages(true, ({ context: { query } }) => { query.authenticated = true });
   // -> this.api.sys.uiConfigListCustomMessages(true, (context) => this.api.addQueryParams(context, { authenticated: true }));
-  addQueryParams(requestContext: { init: HTTPRequestInit; context: RequestOpts }, params: HTTPQuery = {}) {
-    const { context } = requestContext;
+  async addQueryParams(
+    requestContext: { init: HTTPRequestInit; context: RequestOpts },
+    params: HTTPQuery = {}
+  ) {
+    const { context, init } = requestContext;
     context.query = { ...context.query, ...params };
+    return init;
   }
 
   // accepts an error response and returns { status, message, response, path }
   // message is built as error.errors joined with a comma, error.message or a fallback message
   // path is the url of the request, minus the origin -> /v1/sys/wrapping/unwrap
-  async parseError(e: unknown, fallbackMessage = 'An error occurred, please try again') {
+  parseError = waitFor(async (e: unknown, fallbackMessage = 'An error occurred, please try again') => {
     if (e instanceof ResponseError) {
       const { status, url } = e.response;
-      const error = await e.response.json();
+      // instances where an error is thrown multiple times could result in the body already being read
+      // this will result in a readable stream failure and we can't parse the body
+      // to avoid this, clone the response so we can access the body consistently
+      const error = await e.response.clone().json();
       // typically the Vault API error response looks like { errors: ['some error message'] }
       // but sometimes (eg RespondWithStatusCode) it's { data: { error: 'some error message' } }
       const errors = error.data?.error && !error.errors ? [error.data.error] : error.errors;
@@ -167,7 +202,7 @@ export default class ApiService extends Service {
       return {
         message: message || fallbackMessage,
         status,
-        path: url.replace(document.location.origin, ''),
+        path: decodeURIComponent(url.replace(document.location.origin, '')),
         response: error,
       };
     }
@@ -180,18 +215,18 @@ export default class ApiService extends Service {
     return {
       message: (e as Error)?.message || fallbackMessage,
     };
-  }
+  });
 
   // accepts a list response as { keyInfo, keys } and returns a flat array of the keyInfo datum
   // to preserve the keys (unique identifiers) the value will be set on the datum as id
   keyInfoToArray(response: unknown = {}) {
-    const { keyInfo, keys } = response as { keyInfo?: Record<string, unknown>; keys?: string[] };
-    if (!keyInfo || !keys) {
+    const { key_info, keys } = response as { key_info?: Record<string, unknown>; keys?: string[] };
+    if (!key_info || !keys) {
       return [];
     }
     return keys.reduce(
       (arr, key) => {
-        const datum = keyInfo[key];
+        const datum = key_info[key];
         if (datum) {
           arr.push({ id: key, ...datum });
         }
@@ -199,5 +234,22 @@ export default class ApiService extends Service {
       },
       [] as Record<string, unknown>[]
     );
+  }
+
+  // some responses return an object with a uuid as the key rather than an array
+  // in most cases it is easier to work with an array with the uuid set as a property on the object
+  // for example, internalUiListEnabledVisibleMounts returns an object like: { secret: { '/path/to/secret': { ... } } }
+  // usage for above example -> this.api.objectToArray(response.secret, 'path');
+  // this would return an array of objects like: [{ path: '/path/to/secret', ... }]
+  responseObjectToArray<T extends object>(obj?: T, uuidKey?: string) {
+    if (obj) {
+      return Object.entries(obj).map(([key, value]) => {
+        if (uuidKey) {
+          return { [uuidKey]: key, ...value };
+        }
+        return { ...value };
+      });
+    }
+    return [];
   }
 }

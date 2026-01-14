@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -89,6 +89,6 @@ module('Integration | Component | sidebar-frame', function (hooks) {
       <Sidebar::Frame @showSidebar={{true}} />
     `);
 
-    assert.dom(GENERAL.toggleInput('namespace-id')).exists('Namespace picker renders in sidebar footer');
+    assert.dom(GENERAL.button('namespace-picker')).exists('Namespace picker renders in sidebar footer');
   });
 });

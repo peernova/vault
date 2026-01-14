@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -29,6 +29,30 @@ export default Factory.extend({
           summary: 'The token create path is used to create new tokens.',
           tags: ['auth'],
           operationId: 'token-create',
+          responses: {
+            200: {
+              description: 'OK',
+            },
+          },
+        },
+      },
+      'auth/token/roles/{role_name}': {
+        description: '',
+        get: {
+          summary: '',
+          tags: ['auth'],
+          operationId: 'token-read-role',
+          parameters: [
+            {
+              name: 'role_name',
+              required: true,
+              in: 'path',
+              schema: {
+                type: 'string',
+              },
+              description: 'Name of the role',
+            },
+          ],
           responses: {
             200: {
               description: 'OK',

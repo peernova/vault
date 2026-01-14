@@ -1,4 +1,4 @@
-// Copyright (c) HashiCorp, Inc.
+// Copyright IBM Corp. 2016, 2025
 // SPDX-License-Identifier: BUSL-1.1
 
 package git
@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	oexec "os/exec"
 	"strings"
 	"sync"
 
@@ -69,7 +68,7 @@ func WithToken(token string) NewClientOpt {
 	}
 }
 
-// WithToken sets additional gitconfig in NewClient()
+// WithConfig sets additional gitconfig in NewClient()
 func WithConfig(config map[string]string) NewClientOpt {
 	return func(client *Client) {
 		maps.Copy(client.config, config)
@@ -99,7 +98,7 @@ func (c *Client) Exec(ctx context.Context, subCmd string, opts OptStringer) (*Ex
 		env = append(env, res.Env...)
 	}
 
-	cmd := oexec.Command("git", append([]string{subCmd}, opts.Strings()...)...)
+	cmd := exec.Command("git", append([]string{subCmd}, opts.Strings()...)...)
 	cmd.Env = env
 	res.Cmd = cmd.String()
 	ctx = slogctx.Append(ctx, slog.String("cmd", cmd.String()))
@@ -128,13 +127,9 @@ func (e *ExecResponse) String() string {
 	b := strings.Builder{}
 	b.WriteString(e.Cmd)
 	b.WriteString("\n")
-	for _, line := range strings.Split(string(e.Stdout), "\n") {
-		b.WriteString(line)
-	}
+	b.WriteString(string(e.Stdout))
 	b.WriteString("\n")
-	for _, line := range strings.Split(string(e.Stderr), "\n") {
-		b.WriteString(line)
-	}
+	b.WriteString(string(e.Stderr))
 	b.WriteString("\n")
 
 	return b.String()

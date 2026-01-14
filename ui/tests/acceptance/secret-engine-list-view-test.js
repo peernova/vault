@@ -1,19 +1,23 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
 import { click, fillIn, currentRouteName, visit, currentURL } from '@ember/test-helpers';
-import { selectChoose } from 'ember-power-select/test-support';
 import { module, test } from 'qunit';
 import { setupApplicationTest } from 'ember-qunit';
 import { v4 as uuidv4 } from 'uuid';
 
 import { GENERAL } from 'vault/tests/helpers/general-selectors';
 import { SECRET_ENGINE_SELECTORS as SES } from 'vault/tests/helpers/secret-engine/secret-engine-selectors';
-import { deleteEngineCmd, mountEngineCmd, runCmd } from 'vault/tests/helpers/commands';
-import { login, loginNs, logout } from 'vault/tests/helpers/auth/auth-helpers';
-import { MOUNT_BACKEND_FORM } from '../helpers/components/mount-backend-form-selectors';
+import {
+  createTokenCmd,
+  deleteEngineCmd,
+  mountEngineCmd,
+  runCmd,
+  tokenWithPolicyCmd,
+} from 'vault/tests/helpers/commands';
+import { login, loginNs } from 'vault/tests/helpers/auth/auth-helpers';
 import page from 'vault/tests/pages/settings/mount-secret-backend';
 
 module('Acceptance | secret-engine list view', function (hooks) {
@@ -24,7 +28,7 @@ module('Acceptance | secret-engine list view', function (hooks) {
     await fillIn(SES.secretPath('create'), path);
     await fillIn(SES.secretKey('create'), key);
     await fillIn(GENERAL.inputByAttr(key), value);
-    await click(GENERAL.saveButton);
+    await click(GENERAL.submitButton);
     await click(SES.crumb(enginePath));
   };
 
@@ -33,11 +37,29 @@ module('Acceptance | secret-engine list view', function (hooks) {
     return login();
   });
 
+  // the new API service camelizes response keys, so this tests is to assert that does NOT happen when we re-implement it
+  test('it does not camelize the secret mount path', async function (assert) {
+    await visit('/vault/secrets');
+    await page.enableEngine();
+    await click(GENERAL.cardContainer('aws'));
+    await fillIn(GENERAL.inputByAttr('path'), 'aws_engine');
+    await click(GENERAL.submitButton);
+    await click(GENERAL.breadcrumbLink('Secrets'));
+    assert.strictEqual(
+      currentRouteName(),
+      'vault.cluster.secrets.backends',
+      'breadcrumb navigates to the list page'
+    );
+    assert.dom(GENERAL.tableData('aws_engine/', 'path')).hasTextContaining('aws_engine/');
+    // cleanup
+    await runCmd(deleteEngineCmd('aws_engine'));
+  });
+
   test('after enabling an unsupported engine it takes you to list page', async function (assert) {
     await visit('/vault/secrets');
     await page.enableEngine();
-    await click(MOUNT_BACKEND_FORM.mountType('nomad'));
-    await click(GENERAL.saveButton);
+    await click(GENERAL.cardContainer('nomad'));
+    await click(GENERAL.submitButton);
 
     assert.strictEqual(currentRouteName(), 'vault.cluster.secrets.backends', 'navigates to the list page');
     // cleanup
@@ -47,8 +69,8 @@ module('Acceptance | secret-engine list view', function (hooks) {
   test('after enabling a supported engine it takes you to mount page, can see configure and clicking breadcrumb takes you back to list page', async function (assert) {
     await visit('/vault/secrets');
     await page.enableEngine();
-    await click(MOUNT_BACKEND_FORM.mountType('aws'));
-    await click(GENERAL.saveButton);
+    await click(GENERAL.cardContainer('aws'));
+    await click(GENERAL.submitButton);
 
     assert.dom(SES.configTab).exists();
 
@@ -62,28 +84,75 @@ module('Acceptance | secret-engine list view', function (hooks) {
     await runCmd(deleteEngineCmd('aws'));
   });
 
-  test('enterprise: cannot view list without permissions inside namespace', async function (assert) {
-    this.version = 'enterprise';
-    this.backend = `bk-${this.uid}`;
+  test('enterprise: cannot view list without permissions inside a namespace', async function (assert) {
     this.namespace = `ns-${this.uid}`;
-    await runCmd([`write sys/namespaces/${this.namespace} -force`]);
-    await loginNs(this.namespace, ' ');
+    const enginePath1 = `kv-t1-${this.uid}`;
+    const userDefault = await runCmd(createTokenCmd()); // creates a default user token
 
-    await visit('/vault/secrets');
-    assert.dom(SES.secretsBackendLink('cubbyhole')).doesNotExist();
+    await runCmd([`write sys/namespaces/${this.namespace} -force`]); // creates a namespace
+    await loginNs(this.namespace); //logs into namespace with root token
+    await runCmd(mountEngineCmd('kv', enginePath1)); // mounts a kv engine in namespace
 
-    await logout();
+    await loginNs(this.namespace, userDefault); // logs into that same namespace with a default user token
+
+    await visit(`/vault/secrets?namespace=${this.namespace}`); // nav to specified namespace list
+    assert.strictEqual(
+      currentURL(),
+      `/vault/secrets?namespace=${this.namespace}`,
+      'Should be on main secret engines list page within namespace.'
+    );
+    assert.dom(GENERAL.tableData(`${enginePath1}/`, 'path')).doesNotExist(); // without permissions, engine should not show for this user
+
+    // cleanup namespace
+    await login();
+    await runCmd(`delete sys/namespaces/${this.namespace}`);
   });
 
-  test('enterprise: can view list with permissions inside namespace', async function (assert) {
-    this.version = 'enterprise';
-    this.backend = `bk-${this.uid}`;
+  test('enterprise: can view list with permissions inside a namespace', async function (assert) {
     this.namespace = `ns-${this.uid}`;
+    const enginePath1 = `kv-t2-${this.uid}`;
+    const userToken = await runCmd(
+      tokenWithPolicyCmd(
+        'policy',
+        `path "${this.namespace}/sys/*" {
+          capabilities = ["create", "read", "update", "delete", "list"]
+        }`
+      )
+    );
+
+    await runCmd([`write sys/namespaces/${this.namespace} -force`]);
+    await loginNs(this.namespace, userToken); // logs into namespace with user token
+    await runCmd(mountEngineCmd('kv', enginePath1)); // mount kv engine as user
+
+    await loginNs(this.namespace); // logs into namespace with root token
+
+    await visit(`/vault/secrets?namespace=${this.namespace}`); // nav to specified namespace list
+    assert.strictEqual(
+      currentURL(),
+      `/vault/secrets?namespace=${this.namespace}`,
+      'Should be on main secret engines list page within namespace.'
+    );
+
+    assert.dom(GENERAL.tableData(`${enginePath1}/`, 'path')).exists(); // with permissions, able to see the engine in list
+
+    // cleanup namespace
+    await login();
+    await runCmd(`delete sys/namespaces/${this.namespace}`);
+  });
+
+  test('enterprise: it should navigate to cubbyhole list view in child namespace', async function (assert) {
+    this.namespace = `ns-${this.uid}`;
+
     await runCmd([`write sys/namespaces/${this.namespace} -force`]);
     await loginNs(this.namespace);
-    await visit('/vault/secrets');
+    await visit(`/vault/secrets?namespace=${this.namespace}`);
+    await click(`${GENERAL.tableData('cubbyhole/', 'path')} a`);
 
-    assert.dom(SES.secretsBackendLink('cubbyhole')).exists();
+    assert.dom(GENERAL.emptyStateTitle).hasText('No secrets in this backend');
+
+    // cleanup namespace
+    await login();
+    await runCmd(`delete sys/namespaces/${this.namespace}`);
   });
 
   test('after disabling it stays on the list view', async function (assert) {
@@ -92,8 +161,8 @@ module('Acceptance | secret-engine list view', function (hooks) {
     await runCmd(mountEngineCmd('alicloud', enginePath));
     await visit('/vault/secrets');
     // to reduce flakiness, searching by engine name first in case there are pagination issues
-    await selectChoose(GENERAL.searchSelect.trigger('filter-by-engine-name'), enginePath);
-    assert.dom(SES.secretsBackendLink(enginePath)).exists('the alicloud engine is mounted');
+    await fillIn(GENERAL.inputSearch('secret-engine-path'), enginePath);
+    assert.dom(GENERAL.tableData(`${enginePath}/`, 'path')).exists('the alicloud engine is mounted');
 
     await click(GENERAL.menuTrigger);
     await click(GENERAL.menuItem('disable-engine'));
@@ -114,13 +183,13 @@ module('Acceptance | secret-engine list view', function (hooks) {
 
     // check kv1
     await visit('/vault/secrets');
-    await click(SES.secretsBackendLink(enginePath1));
+    await click(`${GENERAL.tableData(`${enginePath1}/`, 'path')} a`);
     for (let i = 0; i <= 15; i++) {
       await createSecret(`secret-${i}`, 'foo', 'bar', enginePath1);
     }
 
     // navigate and check that details view is shown from non-nested secrets
-    await click(GENERAL.pagination.next);
+    await click(GENERAL.nextPage);
     assert.strictEqual(
       currentURL(),
       `/vault/secrets/${enginePath1}/list?page=2`,
@@ -147,7 +216,7 @@ module('Acceptance | secret-engine list view', function (hooks) {
 
     // check kv1
     await visit('/vault/secrets');
-    await click(SES.secretsBackendLink(enginePath1));
+    await click(`${GENERAL.tableData(`${enginePath1}/`, 'path')} a`);
     for (let i = 0; i <= 15; i++) {
       await createSecret(`${parentPath}/secret-${i}`, 'foo', 'bar', enginePath1);
     }
@@ -161,7 +230,7 @@ module('Acceptance | secret-engine list view', function (hooks) {
       'After clicking a nested secret it navigates to the children list view.'
     );
 
-    await click(GENERAL.pagination.next);
+    await click(GENERAL.nextPage);
     assert.strictEqual(
       currentURL(),
       `/vault/secrets/${enginePath1}/list/${parentPath}/?page=2`,

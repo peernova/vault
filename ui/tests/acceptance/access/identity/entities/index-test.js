@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -16,8 +16,6 @@ const SELECTORS = {
   listItem: (name) => `[data-test-identity-row="${name}"]`,
   menu: `[data-test-popup-menu-trigger]`,
   menuItem: (element) => `[data-test-popup-menu="${element}"]`,
-  submit: '[data-test-identity-submit]',
-  confirm: '[data-test-confirm-button]',
 };
 module('Acceptance | /access/identity/entities', function (hooks) {
   setupApplicationTest(hooks);
@@ -44,6 +42,24 @@ module('Acceptance | /access/identity/entities', function (hooks) {
     );
   });
 
+  test('it navigates away from the entities page', async function (assert) {
+    const name = `entity-${uuidv4()}`;
+    await runCmd(`vault write identity/entity name="${name}" policies="default"`);
+    await page.visit({ item_type: 'entities' });
+    await click(GENERAL.navLink('Back to main navigation'));
+    assert.strictEqual(currentRouteName(), 'vault.cluster.dashboard', 'navigates back to dashboard');
+    await runCmd(`vault delete identity/entity/name/${name}`);
+  });
+
+  test('it navigates away from the groups page', async function (assert) {
+    const name = `entity-${uuidv4()}`;
+    await runCmd(`vault write identity/group name="${name}" policies="default" type="external"`);
+    await page.visit({ item_type: 'groups' });
+    await click(GENERAL.navLink('Back to main navigation'));
+    assert.strictEqual(currentRouteName(), 'vault.cluster.dashboard', 'navigates back to dashboard');
+    await runCmd(`vault delete identity/group/name/${name}`);
+  });
+
   test('it renders popup menu for entities', async function (assert) {
     const name = `entity-${uuidv4()}`;
     await runCmd(`vault write identity/entity name="${name}" policies="default"`);
@@ -55,7 +71,7 @@ module('Acceptance | /access/identity/entities', function (hooks) {
       .dom('.hds-dropdown ul')
       .hasText('Details Create alias Edit Disable Delete', 'all actions render for entities');
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menuItem('delete')}`);
-    await click(SELECTORS.confirm);
+    await click(GENERAL.confirmButton);
   });
 
   test('it renders popup menu for external groups', async function (assert) {
@@ -69,7 +85,7 @@ module('Acceptance | /access/identity/entities', function (hooks) {
       .dom('.hds-dropdown ul')
       .hasText('Details Create alias Edit Delete', 'all actions render for external groups');
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menuItem('delete')}`);
-    await click(SELECTORS.confirm);
+    await click(GENERAL.confirmButton);
   });
 
   test('it renders popup menu for external groups with alias', async function (assert) {
@@ -79,7 +95,7 @@ module('Acceptance | /access/identity/entities', function (hooks) {
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menu}`);
     await click(SELECTORS.menuItem('create alias'));
     await fillIn(GENERAL.inputByAttr('name'), 'alias-test');
-    await click(SELECTORS.submit);
+    await click(GENERAL.submitButton);
 
     await visit('/vault/access/identity/groups');
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menu}`);
@@ -87,7 +103,7 @@ module('Acceptance | /access/identity/entities', function (hooks) {
       .dom('.hds-dropdown ul')
       .hasText('Details Edit Delete', 'no "Create alias" option for external groups with an alias');
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menuItem('delete')}`);
-    await click(SELECTORS.confirm);
+    await click(GENERAL.confirmButton);
   });
 
   test('it renders popup menu for internal groups', async function (assert) {
@@ -99,6 +115,6 @@ module('Acceptance | /access/identity/entities', function (hooks) {
       .dom('.hds-dropdown ul')
       .hasText('Details Edit Delete', 'no "Create alias" option for internal groups');
     await click(`${SELECTORS.listItem(name)} ${SELECTORS.menuItem('delete')}`);
-    await click(SELECTORS.confirm);
+    await click(GENERAL.confirmButton);
   });
 });

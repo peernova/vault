@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -13,6 +13,7 @@ import { assert } from '@ember/debug';
 import { addToArray } from 'vault/helpers/add-to-array';
 import { removeFromArray } from 'vault/helpers/remove-from-array';
 import { isEmpty } from '@ember/utils';
+import { presence } from 'vault/utils/forms/validators';
 import { get } from '@ember/object';
 
 /**
@@ -55,7 +56,6 @@ import { get } from '@ember/object';
 export default class FormFieldComponent extends Component {
   emptyData = '{\n}';
   shouldHideLabel = [
-    'boolean',
     'file',
     'json',
     'kv',
@@ -67,6 +67,7 @@ export default class FormFieldComponent extends Component {
     'ttl',
     'toggleButton',
   ];
+  @tracked codemirrorEditor;
   @tracked showToggleTextInput = false;
   @tracked toggleInputEnabled = false;
 
@@ -80,6 +81,8 @@ export default class FormFieldComponent extends Component {
       'Form is attempting to modify an ID. Ember-data does not allow this.',
       valuePath.toLowerCase() !== 'id'
     );
+    assert('@name is required', presence(attr.name));
+    assert('@model (or resource object being updated) is required', presence(model));
     const modelValue = get(model, valuePath);
     this.showToggleTextInput = !!modelValue;
     this.toggleInputEnabled = !!modelValue;
@@ -94,18 +97,41 @@ export default class FormFieldComponent extends Component {
   get isHdsFormField() {
     const { type, options } = this.args.attr;
 
-    // here we replicate the logic in the template, to make sure we don't change the order in which the "ifs" are evaluated
+    // here we replicate the logic in the `form-field.hbs` template, as it was at the beginning of the migation to HDS
+    // to make sure we don't change the order in which the "ifs" are evaluated
+    // see: https://github.com/hashicorp/vault/blob/e99c06a0249f1ecde02c5b48990cb0e91e4ec575/ui/lib/core/addon/components/form-field.hbs
     if (options?.possibleValues?.length > 0) {
       return true;
     } else {
-      if (type === 'number' || type === 'string') {
-        if (options?.editType === 'password') {
+      if (options?.editType === 'dateTimeLocal') {
+        return true;
+      } else if (
+        options?.editType === 'searchSelect' ||
+        options?.editType === 'mountAccessor' ||
+        options?.editType === 'kv' ||
+        options?.editType === 'file' ||
+        options?.editType === 'ttl' ||
+        options?.editType === 'regex' ||
+        options?.editType === 'toggleButton' ||
+        options?.editType === 'optionalText' ||
+        options?.editType === 'stringArray' ||
+        options?.sensitive === true
+      ) {
+        return false;
+      } else if (type === 'number' || type === 'string') {
+        if (options?.editType === 'textarea' || options?.editType === 'password') {
           return true;
-        } else {
+        } else if (options?.editType === 'json') {
           return false;
+        } else {
+          return true;
         }
+      } else if (type === 'boolean' || options?.editType === 'boolean') {
+        return true;
+      } else if (type === 'object' || options?.editType === 'yield') {
+        return false;
       } else {
-        // we leave these fields as they are (for now)
+        // fallback, just in case
         return false;
       }
     }
@@ -123,7 +149,7 @@ export default class FormFieldComponent extends Component {
 
   get hideLabel() {
     const { type, options } = this.args.attr;
-    if (type === 'boolean' || type === 'object' || options?.isSectionHeader) {
+    if (type === 'object' || options?.isSectionHeader) {
       return true;
     }
     // falsey values render a <FormFieldLabel>
@@ -145,13 +171,7 @@ export default class FormFieldComponent extends Component {
   // used in the label element next to the form element
   get labelString() {
     const label = this.args.attr.options?.label || '';
-    if (label) {
-      return label;
-    }
-    if (this.args.attr.name) {
-      return capitalize([humanize([dasherize([this.args.attr.name])])]);
-    }
-    return '';
+    return label ? label : capitalize([humanize([dasherize([this.args.attr.name])])]);
   }
 
   // both the path to mutate on the model, and the path to read the value from
@@ -228,16 +248,24 @@ export default class FormFieldComponent extends Component {
     this.setAndBroadcast(`${valueToSet}`);
   }
   @action
-  codemirrorUpdated(isString, value, codemirror) {
-    codemirror.performLint();
-    const hasErrors = codemirror.state.lint.marked.length > 0;
-    const valToSet = isString ? value : JSON.parse(value);
-
-    if (!hasErrors) {
+  editorUpdated(isString, value) {
+    try {
+      const valToSet = isString ? value : JSON.parse(value);
       this.args.model.set(this.valuePath, valToSet);
       this.onChange(this.valuePath, valToSet);
+
+      // Clicking "Clear" passes an empty string as the value and in that case we must manually reset the editor.
+      // At this time `allowReset` is only passed when `isString` is true.
+      if (value === '' && this.args.attr.options.allowReset && isString) {
+        this.codemirrorEditor.dispatch({
+          changes: [{ from: 0, to: this.codemirrorEditor.state.doc.length, insert: '' }],
+        });
+      }
+    } catch {
+      // if the value is not valid JSON, we don't want to set it on the model
     }
   }
+
   @action
   toggleTextShow() {
     const value = !this.showToggleTextInput;

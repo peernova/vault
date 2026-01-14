@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -22,4 +22,9 @@ export const PATH_MAP = {
   syncDestination: apiPath`sys/sync/destinations/${'type'}/${'name'}`,
   syncSetAssociation: apiPath`sys/sync/destinations/${'type'}/${'name'}/associations/set`,
   syncRemoveAssociation: apiPath`sys/sync/destinations/${'type'}/${'name'}/associations/remove`,
+  kvConfig: apiPath`${'path'}/config`,
+  kvMetadata: apiPath`${'backend'}/metadata/${'path'}`,
+  authMethodConfig: apiPath`auth/${'path'}/config`,
+  authMethodConfigAws: apiPath`auth/${'path'}/config/client`,
+  authMethodDelete: apiPath`sys/auth/${'path'}`,
 };

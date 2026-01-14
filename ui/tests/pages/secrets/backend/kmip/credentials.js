@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -13,5 +13,4 @@ export default create({
   create: clickable('[data-test-role-create]'),
   generateCredentialsLink: clickable('[data-test-kmip-link-generate-credentials]'),
   backToRoleLink: clickable('[data-test-kmip-link-back-to-role]'),
-  submit: clickable('[data-test-edit-form-submit]'),
 });

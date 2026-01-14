@@ -1,5 +1,5 @@
 /**
- * Copyright (c) HashiCorp, Inc.
+ * Copyright IBM Corp. 2016, 2025
  * SPDX-License-Identifier: BUSL-1.1
  */
 
@@ -27,6 +27,7 @@ export default class SecretEngineModel extends Model {
   maxVersions: number;
   casRequired: boolean;
   deleteVersionAfter: string;
+  runningPluginVersion: string;
   get modelTypeForKV(): string;
   get isV2KV(): boolean;
   get attrs(): Array<FormField>;
